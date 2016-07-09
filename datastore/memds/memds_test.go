@@ -809,3 +809,43 @@ func TestKeyOrder(t *testing.T) {
 	}
 
 }
+
+func TestIntIDKeyOrder(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := &compareDs{
+		datastore.New(ctx),
+		memds.New(),
+	}
+
+	keys := make([]datastore.Key, 10)
+	for i := range keys {
+		keys[i] = datastore.NewKey("test").IntID("Test", int64(i+1))
+	}
+	entities := make([]struct{}, len(keys))
+
+	if _, err := ds.Put(keys, entities); err != nil {
+		t.Fatal(err)
+	}
+
+	iter, err := ds.Run(datastore.Query{
+		Namespace: "test",
+		Kind:      "Test",
+		Orders: []datastore.Order{
+			{datastore.KeyName, datastore.DescDir},
+		},
+		KeysOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := iter.Next(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.ID().(int64) != 10 {
+		t.Fatal("expected 10 got", key.ID())
+	}
+}
