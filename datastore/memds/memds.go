@@ -108,7 +108,6 @@ func (ds *ds) get(key datastore.Key, entity interface{}) (bool, error) {
 }
 
 func (ds *ds) findKeyEntity(key datastore.Key) *keyEntity {
-	// TODO: Use sorted version.
 	for _, ke := range ds.keyEntities {
 		if ke.key.Equal(key) {
 			return ke
@@ -518,12 +517,29 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 			comp := compareValues(propValue, f.Value)
 
-			// TODO: Expand this.
 			switch f.Op {
+			case datastore.LessThanOp:
+				if comp >= 0 {
+					indexesToRemove[i] = struct{}{}
+				}
+			case datastore.LessThanEqualOp:
+				if comp > 0 {
+					indexesToRemove[i] = struct{}{}
+				}
 			case datastore.EqualOp:
 				if comp != 0 {
 					indexesToRemove[i] = struct{}{}
 				}
+			case datastore.GreaterThanEqualOp:
+				if comp < 0 {
+					indexesToRemove[i] = struct{}{}
+				}
+			case datastore.GreaterThanOp:
+				if comp <= 0 {
+					indexesToRemove[i] = struct{}{}
+				}
+			default:
+				panic("unknown filter op")
 			}
 		}
 	}
