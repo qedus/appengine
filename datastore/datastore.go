@@ -153,26 +153,42 @@ func (k *key) Incomplete() bool {
 // as it allows transactions to be created.
 type Datastore interface {
 
-	// Get returns datastore entities if available using the specified keys. It
-	// is the GetMulti equivalent in the official datastore package. If an
-	// entity cannot be found then an error will be returned with method
-	// signature NotFound(index int) bool.
-	Get([]Key, interface{}) error
+	// Get populates a slice of entities if available using the specified
+	// complete string or integer keys.
+	// It is the GetMulti equivalent in the official datastore package. Entities
+	// can be any []S or []*S where S is a struct. If an entity cannot be found
+	// then an error will be returned with method signature
+	// NotFound(index int) bool where index is the key/entity index that is
+	// being being checked for presence.
+	Get(keys []Key, entities interface{}) error
 
-	Put([]Key, interface{}) ([]Key, error)
+	// Put saves entities to the datastore. Complete or incomplete string or
+	// integer keys can be used. The returned keys are complete keys. Entities
+	// can be any []S or []*S where S is a struct.
+	Put(keys []Key, entities interface{}) ([]Key, error)
 
-	Delete([]Key) error
+	// Delete deletes entities with the specified string or integer complete
+	// keys.
+	Delete(keys []Key) error
 
-	AllocateKeys(Key, int) ([]Key, error)
+	// AllocateKeys returns n unique integer keys based on the key inputs kind
+	// and parents. Therefore key can be complete or incomplete as the ID part
+	// is disregarded.
+	AllocateKeys(key Key, n int) ([]Key, error)
 
-	Run(Query) (Iterator, error)
+	// Run runs a query against the datastore and returns an iterator.
+	Run(q Query) (Iterator, error)
 }
 
 // TransactionalDatastore represents an App Engine datastore service that allows
 // transactions to be created with RunInTransaction.
 type TransactionalDatastore interface {
 	Datastore
-	RunInTransaction(func(Datastore) error) error
+
+	// RunInTransaction ensures all datastore mutation operations run within
+	// function f using ds to be run atomically. Up to twenty five entities
+	// and/or entity groups can be mutated at a time.
+	RunInTransaction(f func(ds Datastore) error) error
 }
 
 // Iterator is used to get entities from the datastore. A new instance can be
@@ -213,7 +229,7 @@ type Filter struct {
 	Op    FilterOp
 }
 
-// OrderDir is used to describe which to return results from datastore queries..
+// OrderDir is used to describe which to return results from datastore queries.
 type OrderDir int
 
 const (
@@ -231,13 +247,24 @@ type Order struct {
 	Dir  OrderDir
 }
 
+// KeyName is the special name given to the key property of an entity.
+// Using this as the name in query orders or filters will apply the operation
+// to the entity key, not one of its properties.
+const KeyName = "__key__"
+
 // Query is used to construct a datastore query.
 type Query struct {
+
+	// Namespace is the namespace this query will operate in.
 	Namespace string
-	Kind      string
-	Filters   []Filter
-	Orders    []Order
-	KeysOnly  bool
+
+	// Kind is the entity kind this query will operate on. An empty kind will
+	// operate on all entities within an entity group.
+	Kind string
+
+	Filters  []Filter
+	Orders   []Order
+	KeysOnly bool
 }
 
 type datastore struct {
