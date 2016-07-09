@@ -1,0 +1,17 @@
+language: go
+sudo: false
+go:
+ - 1.6.2
+before_install:
+ - wget -O go_appengine_sdk_linux_amd64.zip https://sdkversion.appspot.com/
+ - unzip -d $HOME go_appengine_sdk_linux_amd64.zip
+ - export PATH=$PATH:$HOME/go_appengine
+install:
+ - goapp get -v github.com/qedus/appengine
+ - goapp get -v golang.org/x/tools/cmd/cover
+script:
+ - goapp test -v -covermode=count -coverprofile=profile.cov
+after_success:
+ - goapp get -v github.com/mattn/goveralls
+ - export PATH=$PATH:$HOME/gopath/bin
+ - goveralls -coverprofile=profile.cov -service=travis-ci
