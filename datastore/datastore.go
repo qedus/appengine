@@ -152,8 +152,15 @@ func (k *key) Incomplete() bool {
 // initialised with the New function and differes from the Datastore interface
 // as it allows transactions to be created.
 type Datastore interface {
+
+	// Get returns datastore entities if available using the specified keys. It
+	// is the GetMulti equivalent in the official datastore package. If an
+	// entity cannot be found then an error will be returned with method
+	// signature NotFound(index int) bool.
 	Get([]Key, interface{}) error
+
 	Put([]Key, interface{}) ([]Key, error)
+
 	Delete([]Key) error
 
 	AllocateKeys(Key, int) ([]Key, error)
