@@ -20,6 +20,8 @@ func (nfe notFoundError) NotFound(index int) bool {
 	return nfe[index]
 }
 
+// Key represents an App Engine datastore key. Equivalent to that of the
+// official package.
 type Key interface {
 	Namespace() string
 	Parent() Key
@@ -107,6 +109,8 @@ func (k *key) Equal(o Key) bool {
 	return true
 }
 
+// NewKey creates a new key with the specified namespace. Any key derived from
+// this key via StringID, IntID or IncompleteID will inherit the namespace.
 func NewKey(namespace string) Key {
 	return &key{
 		namespace: namespace,
@@ -143,6 +147,10 @@ func (k *key) Incomplete() bool {
 	return k.ID() == nil
 }
 
+// Datastore represents the functionality that is offered by the App Engine
+// datastore service within a transaction. TransactionalDatastore is the service
+// initialised with the New function and differes from the Datastore interface
+// as it allows transactions to be created.
 type Datastore interface {
 	Get([]Key, interface{}) error
 	Put([]Key, interface{}) ([]Key, error)
@@ -153,43 +161,70 @@ type Datastore interface {
 	Run(Query) (Iterator, error)
 }
 
+// TransactionalDatastore represents an App Engine datastore service that allows
+// transactions to be created with RunInTransaction.
 type TransactionalDatastore interface {
 	Datastore
 	RunInTransaction(func(Datastore) error) error
 }
 
+// Iterator is used to get entities from the datastore. A new instance can be
+// created by calling Run from the Datastore service.
 type Iterator interface {
+
+	// Next returns the next entity and key pair from the iterator. Unlike the
+	// official google.golang.org/appengine/datastore.Iterator implementation,
+	// the returned key will be nil to signify no more iterables to return.
 	Next(interface{}) (Key, error)
 }
 
+// FilterOp is a type that describes one of the datastore filter comparators
+// that can be used when querying for entites by property name and value.
 type FilterOp int
 
 const (
+	// EqualOp is equivalent to = on the offical App Engine API.
 	EqualOp FilterOp = iota
+
+	// LessThanOp is equivalent to < on the official App Engine API.
 	LessThanOp
+
+	// LessThanEqualOp is equivalent to <= on the official App Engine API.
 	LessThanEqualOp
+
+	// GreaterThanOp is equivalent to > on the official App Engine API.
 	GreaterThanOp
+
+	// GreaterThanEqualOp is equivalent to >= on the official App Engine API.
 	GreaterThanEqualOp
 )
 
+// Filter is used to describe a filter when querying entity properties.
 type Filter struct {
 	Name  string
 	Value interface{}
 	Op    FilterOp
 }
 
+// OrderDir is used to describe which to return results from datastore queries..
 type OrderDir int
 
 const (
+	// AscDir orders entites from smallest to largest.
 	AscDir OrderDir = iota
+
+	// DescDir orders entities from largest to smallest.
 	DescDir
 )
 
+// Order is used to describe an order on an entity property when querying the
+// datastore.
 type Order struct {
 	Name string
 	Dir  OrderDir
 }
 
+// Query is used to construct a datastore query.
 type Query struct {
 	Namespace string
 	Kind      string
@@ -202,6 +237,8 @@ type datastore struct {
 	ctx context.Context
 }
 
+// New returns a new TransactionalDatastore service that can be used to interact
+// with the App Engine production and development SDK datastores.
 func New(ctx context.Context) TransactionalDatastore {
 	return &datastore{
 		ctx: ctx,
@@ -586,8 +623,8 @@ func (ds *datastore) Run(q Query) (Iterator, error) {
 	}, nil
 }
 
-func (d *datastore) RunInTransaction(f func(Datastore) error) error {
-	return aeds.RunInTransaction(d.ctx,
+func (ds *datastore) RunInTransaction(f func(Datastore) error) error {
+	return aeds.RunInTransaction(ds.ctx,
 		func(tctx context.Context) error {
 			return f(&datastore{
 				ctx: tctx,

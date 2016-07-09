@@ -34,6 +34,9 @@ type ds struct {
 	lastIntID   int64
 }
 
+// New creates a new TransationalDatastore that resides solely in memory. It is
+// useful for fast unit testing datastore code compared to using
+// google.golang.org/appengine/aetest.
 func New() datastore.TransactionalDatastore {
 	return &ds{
 		keyEntities: []*keyEntity{},
