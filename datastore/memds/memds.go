@@ -404,34 +404,64 @@ func (s *keyEntitySorter) Swap(i, j int) {
 }
 
 func (s *keyEntitySorter) Less(l, r int) bool {
-	leftEntity := reflect.ValueOf(s.keyEntities[l].entity)
-	rightEntity := reflect.ValueOf(s.keyEntities[r].entity)
+	lke := s.keyEntities[l]
+	rke := s.keyEntities[r]
+
+	leftEntity := reflect.ValueOf(lke.entity)
+	rightEntity := reflect.ValueOf(rke.entity)
 
 	for _, o := range s.orders {
-		_, hasLeftVal := leftEntity.Type().FieldByName(o.Name)
-		leftVal := leftEntity.FieldByName(o.Name)
 
-		_, hasRightVal := rightEntity.Type().FieldByName(o.Name)
-		rightVal := rightEntity.FieldByName(o.Name)
-
-		switch {
-		case !hasLeftVal && !hasRightVal:
-			return false
-		case !hasLeftVal:
-			return true
-		case !hasRightVal:
-			return false
-		default:
-			comp := compareValues(leftVal.Interface(), rightVal.Interface())
+		// Compare entity keys.
+		if o.Name == datastore.KeyName {
+			comp := compareKeys(lke.key, rke.key)
 			if comp < 0 {
 				return o.Dir == datastore.AscDir
 			} else if comp > 0 {
 				return o.Dir == datastore.DescDir
 			}
+			continue
+		}
+
+		// Compare entity properties.
+
+		var leftVal interface{}
+
+		// Does the left field exist and is it exported.
+		leftStructField, hasLeftField := leftEntity.Type().FieldByName(o.Name)
+		if hasLeftField && leftStructField.PkgPath == "" {
+			leftVal = leftEntity.FieldByName(o.Name).Interface()
+		}
+
+		var rightVal interface{}
+
+		// Does the right field exist and is it exported.
+		rightStructField, hasRightField := rightEntity.Type().FieldByName(
+			o.Name)
+		if hasRightField && rightStructField.PkgPath == "" {
+			rightVal = rightEntity.FieldByName(o.Name).Interface()
+		}
+
+		switch {
+		case leftVal == nil && rightVal == nil:
+			return false
+		case leftVal == nil:
+			return true
+		case rightVal == nil:
+			return false
+		default:
+			comp := compareValues(leftVal, rightVal)
+			if comp < 0 {
+				return o.Dir == datastore.AscDir
+			} else if comp > 0 {
+				return o.Dir == datastore.DescDir
+			}
+			// Loop around to the next sort order if possible as properties are
+			// equal at this point.
 		}
 	}
 
-	// Values are equal
+	// Values are at least equal.
 	return false
 }
 
@@ -471,16 +501,24 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 				return nil, err
 			}
 
-			// See if the entity has a property we can actually filter on.
-			_, exists := reflect.TypeOf(ke.entity).FieldByName(f.Name)
-			if !exists {
+			var propValue interface{}
+
+			if f.Name == datastore.KeyName {
+				// Filter by entity key.
+				propValue = ke.key
+			} else if _, exists := reflect.TypeOf(
+				ke.entity).FieldByName(f.Name); exists {
+				// Filter by entity property.
+				propValue = reflect.ValueOf(
+					ke.entity).FieldByName(f.Name).Interface()
+			} else {
 				// No property to filter on so continue to next filter.
 				continue
 			}
 
-			propValue := reflect.ValueOf(ke.entity).FieldByName(f.Name)
-			comp := compareValues(propValue.Interface(), f.Value)
+			comp := compareValues(propValue, f.Value)
 
+			// TODO: Expand this.
 			switch f.Op {
 			case datastore.EqualOp:
 				if comp != 0 {

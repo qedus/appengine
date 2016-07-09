@@ -714,15 +714,60 @@ func TestKeyOrder(t *testing.T) {
 	}
 
 	// Ascending by key value.
-	ascQ := datastore.Query{
+	iter, err := ds.Run(datastore.Query{
 		Namespace: "a",
 		Kind:      "Test",
 		Orders: []datastore.Order{
 			{"KeyValue", datastore.AscDir},
 		},
+	})
+
+	// The compareDs implementation of ds.Ds will do all the hard work of
+	// ensuring we get the right entities compared to the App Engine datastore.
+	for {
+		key, err := iter.Next(&testEntity{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key == nil {
+			break
+		}
 	}
 
-	iter, err := ds.Run(ascQ)
+	// Descending by key value.
+	iter, err = ds.Run(datastore.Query{
+		Namespace: "a",
+		Kind:      "Test",
+		Orders: []datastore.Order{
+			{"KeyValue", datastore.DescDir},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The compareDs implementation of ds.Ds will do all the hard work of
+	// ensuring we get the right entities compared to the App Engine datastore.
+	for {
+		key, err := iter.Next(&testEntity{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key == nil {
+			break
+		}
+	}
+
+	// Now check the same thing works with the actual entity keys.
+
+	// Ascending by key.
+	iter, err = ds.Run(datastore.Query{
+		Namespace: "a",
+		Kind:      "Test",
+		Orders: []datastore.Order{
+			{datastore.KeyName, datastore.AscDir},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,15 +785,13 @@ func TestKeyOrder(t *testing.T) {
 	}
 
 	// Descending by key value.
-	descQ := datastore.Query{
+	iter, err = ds.Run(datastore.Query{
 		Namespace: "a",
 		Kind:      "Test",
 		Orders: []datastore.Order{
-			{"KeyValue", datastore.DescDir},
+			{datastore.KeyName, datastore.DescDir},
 		},
-	}
-
-	iter, err = ds.Run(descQ)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,4 +807,5 @@ func TestKeyOrder(t *testing.T) {
 			break
 		}
 	}
+
 }
