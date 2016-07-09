@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
@@ -475,6 +476,27 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 			continue
 		}
 
+		// Parse struct tag.
+		tagValues := strings.Split(structField.Tag.Get("datastore"), ",")
+
+		propName := structField.Name
+		if len(tagValues) > 0 {
+			if tagValues[0] == "-" {
+				// Ignore this field.
+				continue
+			} else if tagValues[0] != "" {
+				// Change the property name from the field name to the one given
+				// by the tag value.
+				propName = tagValues[0]
+			}
+		}
+
+		// Should we not index the entity property.
+		noIndex := false
+		if len(tagValues) > 1 && tagValues[1] == "noindex" {
+			noIndex = true
+		}
+
 		var propValue interface{}
 
 		// Only include specific field types.
@@ -485,6 +507,7 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 			// Check the interface is of Key type.
 			key, ok := value.Field(i).Interface().(Key)
 			if !ok {
+				// We currentlly don't allow any other type of interfaces.
 				continue
 			}
 
@@ -497,11 +520,11 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 			continue
 		}
 
-		// TODO: Add indexes, rename and multiple field types.
-
+		// TODO: Add slice field type.
 		pl = append(pl, aeds.Property{
-			Name:  structField.Name,
-			Value: propValue,
+			Name:    propName,
+			Value:   propValue,
+			NoIndex: noIndex,
 		})
 
 	}
