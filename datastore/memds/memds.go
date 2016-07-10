@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/qedus/appengine/datastore"
+	ids "github.com/qedus/appengine/internal/datastore"
 )
 
 type notFoundError map[int]bool
@@ -154,7 +155,8 @@ func verifyKeysValues(keys []datastore.Key, values reflect.Value) error {
 	return errors.New("entities not structs or pointers")
 }
 
-func (ds *ds) Put(keys []datastore.Key, entities interface{}) ([]datastore.Key, error) {
+func (ds *ds) Put(keys []datastore.Key, entities interface{}) (
+	[]datastore.Key, error) {
 	values := reflect.ValueOf(entities)
 
 	if err := verifyKeysValues(keys, values); err != nil {
@@ -174,7 +176,8 @@ func (ds *ds) Put(keys []datastore.Key, entities interface{}) ([]datastore.Key, 
 	return completeKeys, nil
 }
 
-func (ds *ds) put(key datastore.Key, entity interface{}) (datastore.Key, error) {
+func (ds *ds) put(key datastore.Key, entity interface{}) (
+	datastore.Key, error) {
 
 	// If key is incomplete then complete it.
 	if key.Incomplete() {
@@ -200,6 +203,16 @@ func (ds *ds) put(key datastore.Key, entity interface{}) (datastore.Key, error) 
 		// Allowed entity kind.
 	default:
 		return nil, errors.New("memds: entity not struct or struct pointer")
+	}
+
+	// Ensure all fields are zeroed if asked to do so by the struct tags.
+	for i := 0; i < val.NumField(); i++ {
+		fieldVal := reflect.Indirect(val.Field(i))
+
+		fieldStruct := val.Type().Field(i)
+		if ids.PropertyName(fieldStruct) == "" {
+			fieldVal.Set(reflect.Zero(fieldVal.Type()))
+		}
 	}
 
 	// Check if we already have an entity for this key.
@@ -477,6 +490,26 @@ func (ds *ds) AllocateKeys(key datastore.Key, n int) ([]datastore.Key, error) {
 	return keys, nil
 }
 
+func findFieldName(entity interface{}, fieldOrTagName string) string {
+
+	ty := reflect.TypeOf(entity)
+	if _, exists := ty.FieldByName(fieldOrTagName); exists {
+		return fieldOrTagName
+	}
+
+	// Field name doesn't exist so see if it maps to a user defined tag name.
+	for i := 0; i < ty.NumField(); i++ {
+		field := ty.Field(i)
+		propName := ids.PropertyName(field)
+		if propName == fieldOrTagName {
+			return field.Name
+		}
+	}
+
+	// No field found with specific name.
+	return ""
+}
+
 func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 	indexesToRemove := map[int]struct{}{}
@@ -505,11 +538,10 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 			if f.Name == datastore.KeyName {
 				// Filter by entity key.
 				propValue = ke.key
-			} else if _, exists := reflect.TypeOf(
-				ke.entity).FieldByName(f.Name); exists {
-				// Filter by entity property.
+			} else if fieldName := findFieldName(
+				ke.entity, f.Name); fieldName != "" {
 				propValue = reflect.ValueOf(
-					ke.entity).FieldByName(f.Name).Interface()
+					ke.entity).FieldByName(fieldName).Interface()
 			} else {
 				// No property to filter on so continue to next filter.
 				continue
@@ -566,7 +598,7 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 func validateFilterValue(value interface{}) error {
 	switch value.(type) {
-	case int64, float64, datastore.Key:
+	case int64, float64, datastore.Key, string:
 		return nil
 	default:
 		return errors.New("unknown filter value type")

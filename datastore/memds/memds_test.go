@@ -46,6 +46,38 @@ func newContext(t *testing.T, stronglyConsistentDatastore bool) (
 // implementations and compare the results.
 type compareDs []datastore.TransactionalDatastore
 
+func (cds *compareDs) AllocateKeys(key datastore.Key, n int) (
+	[]datastore.Key, error) {
+
+	compKeys := make([][]datastore.Key, len(*cds))
+	compErrs := make([]error, len(*cds))
+	for i, ds := range *cds {
+		compKeys[i], compErrs[i] = ds.AllocateKeys(key, n)
+	}
+
+	//  Check the returned errors are the same for each datastore.
+	for i, ce := range compErrs {
+		if i >= len(compErrs)-1 {
+			break
+		}
+
+		if equal, err := checkers.DeepEqual(ce, compErrs[i+1]); !equal {
+			return nil, fmt.Errorf("get errors not equal %v", err)
+		}
+	}
+
+	for i, ck := range compKeys {
+		if i >= len(compKeys)-1 {
+			break
+		}
+		if len(ck) != len(compKeys[i+1]) {
+			return nil, errors.New("key length not the same")
+		}
+	}
+
+	return compKeys[0], nil
+}
+
 func (cds *compareDs) Get(keys []datastore.Key, entities interface{}) error {
 
 	ty := reflect.TypeOf(entities)
@@ -126,6 +158,17 @@ func (cds *compareDs) Get(keys []datastore.Key, entities interface{}) error {
 func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 	[]datastore.Key, error) {
 
+	// Allocate IDs if any keys are incomplete.
+	for i, key := range keys {
+		if key.Incomplete() {
+			completeKeys, err := cds.AllocateKeys(key, 1)
+			if err != nil {
+				return nil, err
+			}
+			keys[i] = completeKeys[0]
+		}
+	}
+
 	compKeys := make([][]datastore.Key, len(*cds))
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
@@ -153,6 +196,12 @@ func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 			continue
 		}
 		for j, key := range ck {
+			if keys[j].Incomplete() {
+				// Don't worying about comparing keys if they were previously
+				// incomplete as we can't predict which IDs will be used by the
+				// varous datastores that might be used.
+				continue
+			}
 			if !key.Equal(compKeys[i+1][j]) {
 				return nil, errors.New("put keys not equal")
 			}
@@ -160,7 +209,7 @@ func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 	}
 
 	// Returned errors are the same so just pick the first one to return.
-	return keys, compErrs[0]
+	return compKeys[0], compErrs[0]
 }
 
 func (cds *compareDs) Delete(keys []datastore.Key) error {
@@ -425,7 +474,7 @@ func TestQueryEqualFilter(t *testing.T) {
 			{"Value", datastore.AscDir},
 		},
 		Filters: []datastore.Filter{
-			{"Value", int64(3), datastore.EqualOp},
+			{"Value", datastore.EqualOp, int64(3)},
 		},
 	}
 
@@ -646,7 +695,7 @@ func TestKeyField(t *testing.T) {
 	q := datastore.Query{
 		Kind: "Test",
 		Filters: []datastore.Filter{
-			{"KeyValue", keyValue, datastore.EqualOp},
+			{"KeyValue", datastore.EqualOp, keyValue},
 		},
 	}
 	iter, err := ds.Run(q)
@@ -847,5 +896,73 @@ func TestIntIDKeyOrder(t *testing.T) {
 	}
 	if key.ID().(int64) != 10 {
 		t.Fatal("expected 10 got", key.ID())
+	}
+}
+
+func TestStructTags(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := &compareDs{
+		datastore.New(ctx),
+		memds.New(),
+	}
+
+	type testEntity struct {
+		ExcludeValue int64  `datastore:"-"`
+		RenameValue  string `datastore:"newname"`
+	}
+
+	key := datastore.NewKey("ns").IncompleteID("Kind")
+	putEntity := &testEntity{
+		ExcludeValue: 20,
+		RenameValue:  "hi there",
+	}
+
+	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getEntity := &testEntity{}
+	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+		t.Fatal(err)
+	}
+
+	if getEntity.ExcludeValue != 0 {
+		t.Fatal("expected value to be excluded")
+	}
+	if getEntity.RenameValue != "hi there" {
+		t.Fatal("incorrect rename value")
+	}
+
+	// Query for the renamed value.
+	iter, err := ds.Run(datastore.Query{
+		Namespace: "ns",
+		Kind:      "Kind",
+		Filters: []datastore.Filter{
+			{"newname", datastore.EqualOp, "hi there"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryEntity := &testEntity{}
+	key, err = iter.Next(queryEntity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == nil {
+		t.Fatal("key is nil")
+	}
+	if !key.Equal(keys[0]) {
+		t.Fatal("incorrect key")
+	}
+
+	if queryEntity.ExcludeValue != 0 {
+		t.Fatal("expected value to be excluded")
+	}
+	if queryEntity.RenameValue != "hi there" {
+		t.Fatal("incorrect rename value")
 	}
 }

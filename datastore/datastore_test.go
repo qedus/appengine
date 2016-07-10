@@ -257,7 +257,7 @@ func TestKeyField(t *testing.T) {
 		t.Fatal(err)
 	}
 	if getEntity.IntValue != putEntity.IntValue {
-		t.Fatal("int values not equal")
+		t.Fatal("int values not equal", getEntity, "vs", putEntity)
 	}
 	if !getEntity.KeyValue.Equal(putEntity.KeyValue) {
 		t.Fatal("key values not equal")
@@ -267,7 +267,7 @@ func TestKeyField(t *testing.T) {
 	q := datastore.Query{
 		Kind: "Test",
 		Filters: []datastore.Filter{
-			{"KeyValue", keyValue, datastore.EqualOp},
+			{"KeyValue", datastore.EqualOp, keyValue},
 		},
 	}
 	iter, err := ds.Run(q)
@@ -290,5 +290,70 @@ func TestKeyField(t *testing.T) {
 
 	if !queryEntity.KeyValue.Equal(keyValue) {
 		t.Fatal("incorrect key value")
+	}
+}
+
+func TestStructTags(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := datastore.New(ctx)
+
+	type testEntity struct {
+		ExcludeValue int64  `datastore:"-"`
+		RenameValue  string `datastore:"newname"`
+	}
+
+	key := datastore.NewKey("ns").IncompleteID("Kind")
+	putEntity := &testEntity{
+		ExcludeValue: 20,
+		RenameValue:  "hi there",
+	}
+
+	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getEntity := &testEntity{}
+	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+		t.Fatal(err)
+	}
+
+	if getEntity.ExcludeValue != 0 {
+		t.Fatal("expected value to be excluded")
+	}
+	if getEntity.RenameValue != "hi there" {
+		t.Fatal("incorrect rename value")
+	}
+
+	// Query for the renamed value.
+	iter, err := ds.Run(datastore.Query{
+		Namespace: "ns",
+		Kind:      "Kind",
+		Filters: []datastore.Filter{
+			{"newname", datastore.EqualOp, "hi there"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryEntity := &testEntity{}
+	key, err = iter.Next(queryEntity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == nil {
+		t.Fatal("key is nil")
+	}
+	if !key.Equal(keys[0]) {
+		t.Fatal("incorrect key")
+	}
+
+	if queryEntity.ExcludeValue != 0 {
+		t.Fatal("expected value to be excluded")
+	}
+	if queryEntity.RenameValue != "hi there" {
+		t.Fatal("incorrect rename value")
 	}
 }

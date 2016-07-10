@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
+	ids "github.com/qedus/appengine/internal/datastore"
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	aeds "google.golang.org/appengine/datastore"
@@ -226,8 +226,8 @@ const (
 // Filter is used to describe a filter when querying entity properties.
 type Filter struct {
 	Name  string
-	Value interface{}
 	Op    FilterOp
+	Value interface{}
 }
 
 // OrderDir is used to describe which to return results from datastore queries.
@@ -344,23 +344,38 @@ func (ds *datastore) propertyListToValue(pl aeds.PropertyList,
 	}
 
 	value = reflect.Indirect(value) // Make sure the value is a struct.
+	valueType := value.Type()
+
+	// Datastore property names are derived from struct field names or custom
+	// struct tags. Map any tag renames to actual struct fields in order to get
+	// the field value.
+	fieldValues := make(map[string]reflect.Value, value.NumField())
+	for i := 0; i < value.NumField(); i++ {
+		field := valueType.Field(i)
+
+		propName := ids.PropertyName(field)
+		if propName == "" {
+			// The struct user doesn't want this field or it is unexported.
+			continue
+		}
+		fieldValues[propName] = value.Field(i)
+	}
 
 	for _, p := range pl {
-		f := value.FieldByName(p.Name)
 
-		// Check if the field actually exists.
-		if !f.IsValid() {
+		v, exists := fieldValues[p.Name]
+		if !exists {
 			continue
 		}
 
-		fieldValue := p.Value
+		propValue := p.Value
 
-		aeKey, ok := p.Value.(*aeds.Key)
+		aeKey, ok := propValue.(*aeds.Key)
 		if ok {
-			fieldValue = ds.toKey(aeKey)
+			propValue = ds.toKey(aeKey)
 		}
 
-		f.Set(reflect.ValueOf(fieldValue))
+		v.Set(reflect.ValueOf(propValue))
 	}
 }
 
@@ -471,35 +486,14 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 	for i := 0; i < ty.NumField(); i++ {
 		structField := ty.Field(i)
 
-		// Don't include unexported fields.
-		if structField.PkgPath != "" {
+		propName := ids.PropertyName(structField)
+		if propName == "" {
+			// If there is no name then go on to the next field.
 			continue
 		}
 
-		// Parse struct tag.
-		tagValues := strings.Split(structField.Tag.Get("datastore"), ",")
-
-		propName := structField.Name
-		if len(tagValues) > 0 {
-			if tagValues[0] == "-" {
-				// Ignore this field.
-				continue
-			} else if tagValues[0] != "" {
-				// Change the property name from the field name to the one given
-				// by the tag value.
-				propName = tagValues[0]
-			}
-		}
-
-		// Should we not index the entity property.
-		noIndex := false
-		if len(tagValues) > 1 && tagValues[1] == "noindex" {
-			noIndex = true
-		}
-
-		var propValue interface{}
-
 		// Only include specific field types.
+		var propValue interface{}
 		switch structField.Type.Kind() {
 		case reflect.Int64, reflect.String, reflect.Float64:
 			propValue = value.Field(i).Interface()
@@ -524,7 +518,7 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 		pl = append(pl, aeds.Property{
 			Name:    propName,
 			Value:   propValue,
-			NoIndex: noIndex,
+			NoIndex: ids.PropertyNoIndex(structField),
 		})
 
 	}
