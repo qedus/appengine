@@ -6,14 +6,11 @@ before_install:
  - wget -O go_appengine_sdk_linux_amd64.zip https://sdkversion.appspot.com/
  - unzip -d $HOME go_appengine_sdk_linux_amd64.zip
  - export PATH=$PATH:$HOME/go_appengine
+ - goapp get -v github.com/mattn/goveralls
+ - goapp get -v golang.org/x/tools/cmd/cover
 install:
  - goapp get -v -t -d github.com/qedus/appengine/...
- - goapp get -v golang.org/x/tools/cmd/cover
- - goapp get -v github.com/wadey/gocovmerge
 script:
- - goapp list -f '{{if gt (len .TestGoFiles) 0}}"go test -covermode count -coverprofile {{.Name}}.coverprofile -coverpkg ./... {{.ImportPath}}"{{end}}' ./... | xargs -I {} bash -c {}
+ - ./test.sh
 after_success:
- - gocovmerge `ls *.coverprofile` > coverage.txt
- - goapp get -v github.com/mattn/goveralls
- - export PATH=$PATH:$HOME/gopath/bin
  - goveralls -coverprofile=coverage.txt -service=travis-ci
