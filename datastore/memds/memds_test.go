@@ -966,3 +966,37 @@ func TestStructTags(t *testing.T) {
 		t.Fatal("incorrect rename value")
 	}
 }
+
+func TestSliceProperties(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := &compareDs{
+		datastore.New(ctx),
+		memds.New(),
+	}
+
+	type testEntity struct {
+		IntValues []int64
+	}
+
+	key := datastore.NewKey("").IntID("Kind", 3)
+	intValues := []int64{1, 2, 3, 4}
+	putEntity := &testEntity{
+		IntValues: intValues,
+	}
+
+	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getEntity := &testEntity{}
+	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(getEntity.IntValues, intValues) {
+		t.Fatal("incorrect int64 values", getEntity.IntValues)
+	}
+}

@@ -337,6 +337,83 @@ func (ds *datastore) toKey(aeKey *aeds.Key) Key {
 	return key
 }
 
+func (ds *datastore) valueToPropertyList(value reflect.Value) (
+	aeds.PropertyList, error) {
+	ty := value.Type()
+
+	// Get the underlying type if the value is an interface.
+	if ty.Kind() == reflect.Interface {
+		value = value.Elem()
+	}
+
+	// Make sure we have the struct, not the pointer.
+	value = reflect.Indirect(value)
+	ty = value.Type()
+
+	pl := make(aeds.PropertyList, 0, ty.NumField())
+
+	for i := 0; i < ty.NumField(); i++ {
+		structField := ty.Field(i)
+
+		propName := ids.PropertyName(structField)
+		if propName == "" {
+			// If there is no name then go on to the next field.
+			continue
+		}
+
+		// Only include specific field types.
+		var propValue interface{}
+		switch structField.Type.Kind() {
+		case reflect.Int64, reflect.String, reflect.Float64:
+			propValue = value.Field(i).Interface()
+		case reflect.Interface:
+			// Check the interface is of Key type.
+			key, ok := value.Field(i).Interface().(Key)
+			if !ok {
+				// We currentlly don't allow any other type of interfaces.
+				continue
+			}
+
+			aeKey, err := ds.toAEKey(key)
+			if err != nil {
+				return nil, err
+			}
+			propValue = aeKey
+		case reflect.Slice:
+			// Only accept certain types of slice.
+			switch structField.Type.Elem().Kind() {
+			case reflect.Int64, reflect.Float64, reflect.String:
+
+				// Must convert the slice to a slice of properties.
+				slice := value.Field(i)
+				for i := 0; i < slice.Len(); i++ {
+					pl = append(pl, aeds.Property{
+						Name:     propName,
+						Value:    slice.Index(i).Interface(),
+						NoIndex:  ids.PropertyNoIndex(structField),
+						Multiple: true,
+					})
+				}
+				continue
+			default:
+				return nil, errors.New("unsupported struct field")
+			}
+
+		default:
+			continue
+		}
+
+		pl = append(pl, aeds.Property{
+			Name:     propName,
+			Value:    propValue,
+			NoIndex:  ids.PropertyNoIndex(structField),
+			Multiple: false,
+		})
+
+	}
+	return pl, nil
+}
+
 func (ds *datastore) propertyListToValue(pl aeds.PropertyList,
 	value reflect.Value) {
 	if value.Kind() == reflect.Interface {
@@ -361,21 +438,48 @@ func (ds *datastore) propertyListToValue(pl aeds.PropertyList,
 		fieldValues[propName] = value.Field(i)
 	}
 
+	multiProps := map[string]reflect.Value{}
 	for _, p := range pl {
 
+		// Is there a struct field that can take this property?
 		v, exists := fieldValues[p.Name]
 		if !exists {
 			continue
 		}
 
+		if p.Multiple {
+			if _, exists := multiProps[p.Name]; !exists {
+				sliceType := reflect.SliceOf(reflect.TypeOf(p.Value))
+				multiProps[p.Name] = reflect.MakeSlice(sliceType, 0, 1)
+			}
+
+			multiProps[p.Name] = reflect.Append(multiProps[p.Name],
+				reflect.ValueOf(p.Value))
+			continue
+		}
+
+		if p.Value == nil {
+			continue
+		}
+
+		// Do any of the property values need to be transformed.
 		propValue := p.Value
 
-		aeKey, ok := propValue.(*aeds.Key)
-		if ok {
-			propValue = ds.toKey(aeKey)
+		switch v := propValue.(type) {
+		case *aeds.Key:
+			propValue = ds.toKey(v)
 		}
 
 		v.Set(reflect.ValueOf(propValue))
+	}
+
+	for propName, propValues := range multiProps {
+		fieldValue, exists := fieldValues[propName]
+		if !exists {
+			continue
+		}
+
+		fieldValue.Set(propValues)
 	}
 }
 
@@ -466,63 +570,6 @@ func verifyKeysValues(keys []Key, values reflect.Value) error {
 		return nil
 	}
 	return errors.New("entities not structs or pointers")
-}
-
-func (ds *datastore) valueToPropertyList(value reflect.Value) (
-	aeds.PropertyList, error) {
-	ty := value.Type()
-
-	// Get the underlying type if the value is an interface.
-	if ty.Kind() == reflect.Interface {
-		value = value.Elem()
-	}
-
-	// Make sure we have the struct, not the pointer.
-	value = reflect.Indirect(value)
-	ty = value.Type()
-
-	pl := make(aeds.PropertyList, 0, ty.NumField())
-
-	for i := 0; i < ty.NumField(); i++ {
-		structField := ty.Field(i)
-
-		propName := ids.PropertyName(structField)
-		if propName == "" {
-			// If there is no name then go on to the next field.
-			continue
-		}
-
-		// Only include specific field types.
-		var propValue interface{}
-		switch structField.Type.Kind() {
-		case reflect.Int64, reflect.String, reflect.Float64:
-			propValue = value.Field(i).Interface()
-		case reflect.Interface:
-			// Check the interface is of Key type.
-			key, ok := value.Field(i).Interface().(Key)
-			if !ok {
-				// We currentlly don't allow any other type of interfaces.
-				continue
-			}
-
-			aeKey, err := ds.toAEKey(key)
-			if err != nil {
-				return nil, err
-			}
-			propValue = aeKey
-		default:
-			continue
-		}
-
-		// TODO: Add slice field type.
-		pl = append(pl, aeds.Property{
-			Name:    propName,
-			Value:   propValue,
-			NoIndex: ids.PropertyNoIndex(structField),
-		})
-
-	}
-	return pl, nil
 }
 
 func (ds *datastore) Put(keys []Key, entities interface{}) ([]Key, error) {
