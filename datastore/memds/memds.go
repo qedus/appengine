@@ -510,6 +510,37 @@ func findFieldName(entity interface{}, fieldOrTagName string) string {
 	return ""
 }
 
+func isAncestor(ancestor, key datastore.Key) bool {
+	// Get the ancestor path.
+	ancestorPath := []datastore.Key{ancestor}
+	for parent := ancestor.Parent(); parent != nil; parent = parent.Parent() {
+		// Insert the parent to the beginning of the slice.
+		ancestorPath = append([]datastore.Key{parent}, ancestorPath...)
+	}
+
+	// Get the path of our key.
+	keyPath := []datastore.Key{key}
+	for parent := key.Parent(); parent != nil; parent = parent.Parent() {
+		// Insert the parent to the beginning of the slice.
+		keyPath = append([]datastore.Key{parent}, keyPath...)
+	}
+
+	if len(ancestorPath) > len(keyPath) {
+		// Ancestor's path is longer than the keyPath we are checking so it
+		// definitely cannot be an ancestor, only a possible child.
+		return false
+	}
+
+	// Now compare each path element to see they are the same until ancestor
+	// runs out of elements.
+	for i := 0; i < len(ancestorPath); i++ {
+		if !ancestorPath[i].Equal(keyPath[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 	indexesToRemove := map[int]struct{}{}
@@ -525,6 +556,13 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 			continue
 		} else if ke.key.Kind() != q.Kind {
 			indexesToRemove[i] = struct{}{}
+		}
+
+		// Remove non-ancestors.
+		if q.Ancestor != nil {
+			if !isAncestor(q.Ancestor, ke.key) {
+				indexesToRemove[i] = struct{}{}
+			}
 		}
 
 		for _, f := range q.Filters {

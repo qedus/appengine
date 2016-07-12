@@ -263,8 +263,11 @@ type Query struct {
 	// operate on all entities within an entity group.
 	Kind string
 
-	Filters  []Filter
-	Orders   []Order
+	Ancestor Key
+
+	Filters []Filter
+	Orders  []Order
+
 	KeysOnly bool
 }
 
@@ -664,6 +667,18 @@ func (it *iterator) Next(entity interface{}) (Key, error) {
 
 func (ds *datastore) Run(q Query) (Iterator, error) {
 	aeQ := aeds.NewQuery(q.Kind)
+
+	if q.Ancestor != nil {
+		aeKey, err := ds.toAEKey(q.Ancestor)
+		if err != nil {
+			return nil, err
+		}
+		aeQ = aeQ.Ancestor(aeKey)
+	}
+
+	if q.KeysOnly {
+		aeQ = aeQ.KeysOnly()
+	}
 
 	// Apply orders.
 	for _, o := range q.Orders {

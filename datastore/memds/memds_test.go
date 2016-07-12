@@ -1000,3 +1000,70 @@ func TestSliceProperties(t *testing.T) {
 		t.Fatal("incorrect int64 values", getEntity.IntValues)
 	}
 }
+
+func TestAncestorQuery(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := &compareDs{
+		datastore.New(ctx),
+		memds.New(),
+	}
+	//ds := datastore.New(ctx)
+
+	type testEntity struct {
+		IntValue int64
+	}
+
+	keys := []datastore.Key{
+		datastore.NewKey("").IntID("Parent", 1).IntID("Child", 1),
+		datastore.NewKey("").IntID("Parent", 2).IntID("Child", 2),
+		datastore.NewKey("").IntID("Parent", 1).IntID("Child", 3),
+		datastore.NewKey("").IntID("Child", 4),
+	}
+	putEntities := []*testEntity{{1}, {2}, {3}, {4}}
+
+	if _, err := ds.Put(keys, putEntities); err != nil {
+		t.Fatal(err)
+	}
+
+	iter, err := ds.Run(datastore.Query{
+		Kind:     "Child",
+		Ancestor: datastore.NewKey("").IntID("Parent", 1),
+		Orders: []datastore.Order{
+			{datastore.KeyName, datastore.DescDir},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iterEntity := &testEntity{}
+	if key, err := iter.Next(iterEntity); err != nil {
+		t.Fatal(err)
+	} else if key == nil {
+		t.Fatal("no data")
+	} else if !key.Equal(keys[2]) {
+		t.Fatal("keys not equal")
+
+	} else if iterEntity.IntValue != 3 {
+		t.Fatal("incorrect int value")
+	}
+
+	iterEntity = &testEntity{}
+	if key, err := iter.Next(iterEntity); err != nil {
+		t.Fatal(err)
+	} else if key == nil {
+		t.Fatal("no data")
+	} else if !key.Equal(keys[0]) {
+		t.Fatal("keys not equal")
+	} else if iterEntity.IntValue != 1 {
+		t.Fatal("incorrect int value")
+	}
+
+	if key, err := iter.Next(&testEntity{}); err != nil {
+		t.Fatal(err)
+	} else if key != nil {
+		t.Fatal("expected nil key")
+	}
+}
