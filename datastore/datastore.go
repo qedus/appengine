@@ -155,12 +155,11 @@ func (k *key) Incomplete() bool {
 type Datastore interface {
 
 	// Get populates a slice of entities if available using the specified
-	// complete string or integer keys.
-	// It is the GetMulti equivalent in the official datastore package. Entities
-	// can be any []S or []*S where S is a struct. If an entity cannot be found
-	// then an error will be returned with method signature
-	// NotFound(index int) bool where index is the key/entity index that is
-	// being being checked for presence.
+	// complete string or integer keys. It is the GetMulti equivalent in the
+	// official datastore package. Entities can be any []S or []*S where S is a
+	// struct. If an entity cannot be found then an error will be returned with
+	// method signature NotFound(index int) bool where index is the key/entity
+	// index that is being being checked for presence.
 	Get(keys []Key, entities interface{}) error
 
 	// Put saves entities to the datastore. Complete or incomplete string or
@@ -199,7 +198,7 @@ type Iterator interface {
 	// Next returns the next entity and key pair from the iterator. Unlike the
 	// official google.golang.org/appengine/datastore.Iterator implementation,
 	// the returned key will be nil to signify no more iterables to return.
-	Next(interface{}) (Key, error)
+	Next(entity interface{}) (Key, error)
 }
 
 // FilterOp is a type that describes one of the datastore filter comparators
