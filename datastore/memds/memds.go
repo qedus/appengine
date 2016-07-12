@@ -2,6 +2,7 @@ package memds
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -541,6 +542,36 @@ func isAncestor(ancestor, key datastore.Key) bool {
 	return true
 }
 
+func isMatch(left interface{}, op datastore.FilterOp, right interface{}) bool {
+	comp := compareValues(left, right)
+
+	switch op {
+	case datastore.LessThanOp:
+		if comp >= 0 {
+			return true
+		}
+	case datastore.LessThanEqualOp:
+		if comp > 0 {
+			return true
+		}
+	case datastore.EqualOp:
+		if comp != 0 {
+			return true
+		}
+	case datastore.GreaterThanEqualOp:
+		if comp < 0 {
+			return true
+		}
+	case datastore.GreaterThanOp:
+		if comp <= 0 {
+			return true
+		}
+	default:
+		panic("unknown filter op")
+	}
+	return false
+}
+
 func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 	indexesToRemove := map[int]struct{}{}
@@ -585,31 +616,22 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 				continue
 			}
 
-			comp := compareValues(propValue, f.Value)
+			// Cater for entity property slices. If any of the elements in a
+			// slice is not a filter match then don't remove the entity from
+			// the iteration candidates.
+			shouldFilter := true
+			if reflect.TypeOf(propValue).Kind() == reflect.Slice {
+				v := reflect.ValueOf(propValue)
+				for j := 0; j < v.Len(); j++ {
+					if !isMatch(v.Index(j).Interface(), f.Op, f.Value) {
+						shouldFilter = false
+						break
+					}
+				}
+			}
 
-			switch f.Op {
-			case datastore.LessThanOp:
-				if comp >= 0 {
-					indexesToRemove[i] = struct{}{}
-				}
-			case datastore.LessThanEqualOp:
-				if comp > 0 {
-					indexesToRemove[i] = struct{}{}
-				}
-			case datastore.EqualOp:
-				if comp != 0 {
-					indexesToRemove[i] = struct{}{}
-				}
-			case datastore.GreaterThanEqualOp:
-				if comp < 0 {
-					indexesToRemove[i] = struct{}{}
-				}
-			case datastore.GreaterThanOp:
-				if comp <= 0 {
-					indexesToRemove[i] = struct{}{}
-				}
-			default:
-				panic("unknown filter op")
+			if shouldFilter {
+				indexesToRemove[i] = struct{}{}
 			}
 		}
 	}
@@ -639,7 +661,7 @@ func validateFilterValue(value interface{}) error {
 	case int64, float64, datastore.Key, string:
 		return nil
 	default:
-		return errors.New("unknown filter value type")
+		return fmt.Errorf("unsupported filter value type %T", value)
 	}
 }
 

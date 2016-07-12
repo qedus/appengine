@@ -999,6 +999,30 @@ func TestSliceProperties(t *testing.T) {
 	if !reflect.DeepEqual(getEntity.IntValues, intValues) {
 		t.Fatal("incorrect int64 values", getEntity.IntValues)
 	}
+
+	iter, err := ds.Run(datastore.Query{
+		Kind: "Kind",
+		Filters: []datastore.Filter{
+			{"IntValues", datastore.GreaterThanOp, int64(2)},
+		},
+		Orders: []datastore.Order{
+			{"IntValues", datastore.AscDir},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		entity := &testEntity{}
+		key, err := iter.Next(entity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key == nil {
+			break
+		}
+	}
 }
 
 func TestAncestorQuery(t *testing.T) {
