@@ -1,6 +1,10 @@
 package datastore
 
-import "fmt"
+import (
+	"fmt"
+
+	"golang.org/x/net/context"
+)
 
 // Key represents an App Engine datastore key. Equivalent to that of the
 // official package.
@@ -250,4 +254,20 @@ type Query struct {
 	Orders  []Order
 
 	KeysOnly bool
+}
+
+var datastoreKey = "datastore"
+
+// WithContext is a convienience function to add a TransactionalDatastore to a
+// context.
+func WithContext(parent context.Context,
+	ds TransactionalDatastore) context.Context {
+	return context.WithValue(parent, &datastoreKey, ds)
+}
+
+// FromContext is a convenience function to retrieve a TransactionalDatastore
+// from a context that had previously been operated on with WithContext.
+func FromContext(ctx context.Context) (TransactionalDatastore, bool) {
+	ds, ok := ctx.Value(&datastoreKey).(TransactionalDatastore)
+	return ds, ok
 }
