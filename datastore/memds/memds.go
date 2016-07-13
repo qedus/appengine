@@ -263,8 +263,10 @@ func compareValues(left, right interface{}) int {
 	comp := 0
 	switch left.(type) {
 	case int64:
-		comp = -5
+		comp = -6
 	case time.Time:
+		comp = -5
+	case bool:
 		comp = -4
 	case string:
 		comp = -3
@@ -278,8 +280,10 @@ func compareValues(left, right interface{}) int {
 
 	switch right.(type) {
 	case int64:
-		comp = comp + 5
+		comp = comp + 6
 	case time.Time:
+		comp = comp + 5
+	case bool:
 		comp = comp + 4
 	case string:
 		comp = comp + 3
@@ -300,6 +304,14 @@ func compareValues(left, right interface{}) int {
 	// We know the left type is the same as the right as comp == 0 so now
 	// compare the values of each type.
 	switch left.(type) {
+	case bool:
+		l, r := left.(bool), right.(bool)
+		if !l && r {
+			return -1
+		} else if l && !r {
+			return 1
+		}
+		return 0
 	case string:
 		return strings.Compare(left.(string), right.(string))
 	case int64:

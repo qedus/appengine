@@ -625,20 +625,30 @@ func TestComplexValueSortOrder(t *testing.T) {
 		Value time.Time
 	}
 
-	if _, err := ds.Put([]datastore.Key{
+	type testBool struct {
+		Value bool
+	}
+
+	keys := []datastore.Key{
 		datastore.NewKey("").StringID("Entity", "string"),
 		datastore.NewKey("").StringID("Entity", "int"),
 		datastore.NewKey("").StringID("Entity", "flaot"),
 		datastore.NewKey("").StringID("Entity", "key"),
 		datastore.NewKey("").StringID("Entity", "time"),
-	},
-		[]interface{}{
-			&testString{"value"},
-			&testInt{23},
-			&testFloat{23.2},
-			&testKey{datastore.NewKey("").StringID("KeyValue", "k")},
-			&testTime{time.Unix(123456, 123456)},
-		}); err != nil {
+		datastore.NewKey("").StringID("Entity", "bool-true"),
+		datastore.NewKey("").StringID("Entity", "bool-false"),
+	}
+	entities := []interface{}{
+		&testString{"value"},
+		&testInt{23},
+		&testFloat{23.2},
+		&testKey{datastore.NewKey("").StringID("KeyValue", "k")},
+		&testTime{time.Unix(123456, 123456)},
+		&testBool{true},
+		&testBool{false},
+	}
+
+	if _, err := ds.Put(keys, entities); err != nil {
 		t.Fatal(err)
 	}
 
@@ -653,7 +663,25 @@ func TestComplexValueSortOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i <= len(keys); i++ {
+		_, err := iter.Next(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	iter, err = ds.Run(datastore.Query{
+		Kind:     "Entity",
+		KeysOnly: true,
+		Orders: []datastore.Order{
+			{"Value", datastore.DescDir},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i <= len(keys); i++ {
 		_, err := iter.Next(nil)
 		if err != nil {
 			t.Fatal(err)

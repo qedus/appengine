@@ -367,7 +367,7 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 		// Only include specific field types.
 		var propValue interface{}
 		switch structField.Type.Kind() {
-		case reflect.Int64, reflect.String, reflect.Float64:
+		case reflect.Int64, reflect.String, reflect.Float64, reflect.Bool:
 			propValue = value.Field(i).Interface()
 		case reflect.Struct:
 			switch v := value.Field(i).Interface().(type) {
