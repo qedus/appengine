@@ -15,6 +15,7 @@ import (
 
 	"github.com/juju/testing/checkers"
 	"github.com/qedus/appengine/datastore"
+	"github.com/qedus/appengine/datastore/ds"
 	"github.com/qedus/appengine/datastore/memds"
 )
 
@@ -346,7 +347,7 @@ func TestPutGetDelete(t *testing.T) {
 
 	ds := &compareDs{
 		memds.New(),
-		datastore.New(ctx),
+		ds.New(ctx),
 	}
 
 	type testEntity struct {
@@ -403,7 +404,7 @@ func TestTx(t *testing.T) {
 
 	ds := &compareDs{
 		memds.New(),
-		datastore.New(ctx),
+		ds.New(ctx),
 	}
 
 	type testEntity struct {
@@ -451,7 +452,7 @@ func TestQueryEqualFilter(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -514,7 +515,7 @@ func TestQueryOrder(t *testing.T) {
 
 	ds := &compareDs{
 		memds.New(),
-		datastore.New(ctx),
+		ds.New(ctx),
 	}
 
 	type testEntity struct {
@@ -602,7 +603,7 @@ func TestComplexValueSortOrder(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -695,7 +696,7 @@ func TestKeyField(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -763,7 +764,7 @@ func TestKeyOrder(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -901,7 +902,7 @@ func TestIntIDKeyOrder(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -941,7 +942,7 @@ func TestStructTags(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -1009,7 +1010,7 @@ func TestSliceProperties(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -1067,7 +1068,7 @@ func TestAncestorQuery(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 
@@ -1133,7 +1134,7 @@ func TestByteSliceProperties(t *testing.T) {
 	defer closeFunc()
 
 	ds := &compareDs{
-		datastore.New(ctx),
+		ds.New(ctx),
 		memds.New(),
 	}
 

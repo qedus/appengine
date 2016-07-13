@@ -1,4 +1,4 @@
-package datastore_test
+package nds_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/qedus/appengine/datastore"
+	"github.com/qedus/appengine/datastore/nds"
+
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/aetest"
@@ -42,7 +44,7 @@ func TestPutGetDelete(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	type testEntity struct {
 		Value int64
@@ -102,7 +104,7 @@ func TestTx(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	type testEntity struct {
 		Value int64
@@ -169,7 +171,7 @@ func TestAllocateKeys(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	key := datastore.NewKey("ns").IntID("Parent", 2).IncompleteID("Test")
 
@@ -206,7 +208,7 @@ func TestPutIncompleteKey(t *testing.T) {
 		Value int64
 	}
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	key := datastore.NewKey("ns").IncompleteID("Kind")
 	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{&testEntity{4}})
@@ -235,7 +237,7 @@ func TestKeyField(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	type testEntity struct {
 		IntValue int64
@@ -299,7 +301,7 @@ func TestStructTags(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	type testEntity struct {
 		ExcludeValue int64  `datastore:"-"`
@@ -364,7 +366,7 @@ func TestSliceProperties(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	type testEntity struct {
 		IntValues []int64
@@ -395,7 +397,7 @@ func TestByteSliceProperties(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := datastore.New(ctx)
+	ds := nds.New(ctx)
 
 	// []byte should be treated as a single property like string, not a slice.
 	type testEntity struct {
