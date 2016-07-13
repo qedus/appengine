@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/qedus/appengine/datastore"
 	ids "github.com/qedus/appengine/internal/datastore"
@@ -32,7 +33,7 @@ type keyValue struct {
 }
 
 type ds struct {
-	keyEntities []*keyEntity
+	keyEntities []keyEntity
 	lastIntID   int64
 }
 
@@ -41,7 +42,7 @@ type ds struct {
 // google.golang.org/appengine/aetest.
 func New() datastore.TransactionalDatastore {
 	return &ds{
-		keyEntities: []*keyEntity{},
+		keyEntities: []keyEntity{},
 	}
 }
 
@@ -112,7 +113,7 @@ func (ds *ds) get(key datastore.Key, entity interface{}) (bool, error) {
 func (ds *ds) findKeyEntity(key datastore.Key) *keyEntity {
 	for _, ke := range ds.keyEntities {
 		if ke.key.Equal(key) {
-			return ke
+			return &ke
 		}
 	}
 	return nil
@@ -219,7 +220,7 @@ func (ds *ds) put(key datastore.Key, entity interface{}) (
 	// Check if we already have an entity for this key.
 	if ke := ds.findKeyEntity(key); ke == nil {
 		// Key doesn't exist so add it.
-		ds.keyEntities = append(ds.keyEntities, &keyEntity{
+		ds.keyEntities = append(ds.keyEntities, keyEntity{
 			key:    key,
 			entity: val.Interface(), // Make sure we capture the value not ptr.
 		})
@@ -262,6 +263,8 @@ func compareValues(left, right interface{}) int {
 	comp := 0
 	switch left.(type) {
 	case int64:
+		comp = -5
+	case time.Time:
 		comp = -4
 	case string:
 		comp = -3
@@ -275,6 +278,8 @@ func compareValues(left, right interface{}) int {
 
 	switch right.(type) {
 	case int64:
+		comp = comp + 5
+	case time.Time:
 		comp = comp + 4
 	case string:
 		comp = comp + 3
@@ -315,6 +320,14 @@ func compareValues(left, right interface{}) int {
 		return 0
 	case datastore.Key:
 		return compareKeys(left.(datastore.Key), right.(datastore.Key))
+	case time.Time:
+		l, r := left.(time.Time), right.(time.Time)
+		if l.Before(r) {
+			return -1
+		} else if l.After(r) {
+			return 1
+		}
+		return 0
 	default:
 		panic("unknown property type")
 	}
@@ -404,7 +417,7 @@ func compareKeys(left, right datastore.Key) int {
 }
 
 type keyEntitySorter struct {
-	keyEntities []*keyEntity
+	keyEntities []keyEntity
 	orders      []datastore.Order
 }
 
@@ -542,34 +555,25 @@ func isAncestor(ancestor, key datastore.Key) bool {
 	return true
 }
 
-func isMatch(left interface{}, op datastore.FilterOp, right interface{}) bool {
+func isComparisonTrue(left interface{},
+	op datastore.FilterOp, right interface{}) bool {
+
 	comp := compareValues(left, right)
 
 	switch op {
 	case datastore.LessThanOp:
-		if comp >= 0 {
-			return true
-		}
+		return comp < 0
 	case datastore.LessThanEqualOp:
-		if comp > 0 {
-			return true
-		}
+		return comp <= 0
 	case datastore.EqualOp:
-		if comp != 0 {
-			return true
-		}
+		return comp == 0
 	case datastore.GreaterThanEqualOp:
-		if comp < 0 {
-			return true
-		}
+		return comp >= 0
 	case datastore.GreaterThanOp:
-		if comp <= 0 {
-			return true
-		}
+		return comp > 0
 	default:
 		panic("unknown filter op")
 	}
-	return false
 }
 
 func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
@@ -619,24 +623,28 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 			// Cater for entity property slices. If any of the elements in a
 			// slice is not a filter match then don't remove the entity from
 			// the iteration candidates.
-			shouldFilter := true
 			if reflect.TypeOf(propValue).Kind() == reflect.Slice {
+				shouldRemove := true
 				v := reflect.ValueOf(propValue)
 				for j := 0; j < v.Len(); j++ {
-					if !isMatch(v.Index(j).Interface(), f.Op, f.Value) {
-						shouldFilter = false
+					if isComparisonTrue(v.Index(j).Interface(),
+						f.Op, f.Value) {
+						shouldRemove = false
 						break
 					}
 				}
-			}
-
-			if shouldFilter {
-				indexesToRemove[i] = struct{}{}
+				if shouldRemove {
+					indexesToRemove[i] = struct{}{}
+				}
+			} else {
+				if !isComparisonTrue(propValue, f.Op, f.Value) {
+					indexesToRemove[i] = struct{}{}
+				}
 			}
 		}
 	}
 
-	keyEntities := []*keyEntity{}
+	keyEntities := []keyEntity{}
 	for i, ke := range ds.keyEntities {
 		if _, remove := indexesToRemove[i]; remove {
 			continue
@@ -666,7 +674,7 @@ func validateFilterValue(value interface{}) error {
 }
 
 type iterator struct {
-	keyEntities []*keyEntity
+	keyEntities []keyEntity
 	keysOnly    bool
 
 	index int

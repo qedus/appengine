@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
@@ -620,17 +621,23 @@ func TestComplexValueSortOrder(t *testing.T) {
 		Value datastore.Key
 	}
 
+	type testTime struct {
+		Value time.Time
+	}
+
 	if _, err := ds.Put([]datastore.Key{
 		datastore.NewKey("").StringID("Entity", "string"),
 		datastore.NewKey("").StringID("Entity", "int"),
 		datastore.NewKey("").StringID("Entity", "flaot"),
 		datastore.NewKey("").StringID("Entity", "key"),
+		datastore.NewKey("").StringID("Entity", "time"),
 	},
 		[]interface{}{
 			&testString{"value"},
 			&testInt{23},
 			&testFloat{23.2},
 			&testKey{datastore.NewKey("").StringID("KeyValue", "k")},
+			&testTime{time.Unix(123456, 123456)},
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +653,7 @@ func TestComplexValueSortOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		_, err := iter.Next(nil)
 		if err != nil {
 			t.Fatal(err)
@@ -668,7 +675,7 @@ func TestKeyField(t *testing.T) {
 		KeyValue datastore.Key
 	}
 
-	key := datastore.NewKey("").IntID("Test", 2)
+	key := datastore.NewKey("ns").IntID("Test", 2)
 	keyValue := datastore.NewKey("ns").StringID("Value", "three")
 	putEntity := &testEntity{
 		IntValue: 5,
@@ -693,7 +700,8 @@ func TestKeyField(t *testing.T) {
 
 	// Now query for the key.
 	q := datastore.Query{
-		Kind: "Test",
+		Namespace: "ns",
+		Kind:      "Test",
 		Filters: []datastore.Filter{
 			{"KeyValue", datastore.EqualOp, keyValue},
 		},

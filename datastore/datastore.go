@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	ids "github.com/qedus/appengine/internal/datastore"
 	"golang.org/x/net/context"
@@ -368,6 +369,13 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 		switch structField.Type.Kind() {
 		case reflect.Int64, reflect.String, reflect.Float64:
 			propValue = value.Field(i).Interface()
+		case reflect.Struct:
+			switch v := value.Field(i).Interface().(type) {
+			case time.Time:
+				propValue = v
+			default:
+				continue
+			}
 		case reflect.Interface:
 			// Check the interface is of Key type.
 			key, ok := value.Field(i).Interface().(Key)
@@ -398,7 +406,7 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 				}
 				continue
 			default:
-				return nil, errors.New("unsupported struct field")
+				continue
 			}
 
 		default:
