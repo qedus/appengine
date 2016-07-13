@@ -1,6 +1,7 @@
 package datastore_test
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 	"testing"
@@ -387,5 +388,37 @@ func TestSliceProperties(t *testing.T) {
 
 	if !reflect.DeepEqual(getEntity.IntValues, intValues) {
 		t.Fatal("incorrect int64 values", getEntity.IntValues)
+	}
+}
+
+func TestByteSliceProperties(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := datastore.New(ctx)
+
+	// []byte should be treated as a single property like string, not a slice.
+	type testEntity struct {
+		ByteValue []byte `datastore:",noindex"`
+	}
+
+	key := datastore.NewKey("").IntID("Kind", 3)
+	byteValue := []byte("hi there")
+	putEntity := &testEntity{
+		ByteValue: byteValue,
+	}
+
+	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getEntity := &testEntity{}
+	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(getEntity.ByteValue, byteValue) {
+		t.Fatal("incorrect byte values", getEntity.ByteValue)
 	}
 }

@@ -405,6 +405,19 @@ func (ds *datastore) valueToPropertyList(value reflect.Value) (
 					})
 				}
 				continue
+			case reflect.Uint8: // byte
+				// Treat []byte as a standard property, not a multi property.
+				propValue = value.Field(i).Interface()
+
+				// Automatically set noindex.
+				pl = append(pl, aeds.Property{
+					Name:     propName,
+					Value:    propValue,
+					NoIndex:  true,
+					Multiple: false,
+				})
+				continue
+
 			default:
 				continue
 			}

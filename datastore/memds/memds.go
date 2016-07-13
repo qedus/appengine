@@ -588,6 +588,16 @@ func isComparisonTrue(left interface{},
 	}
 }
 
+func isIndexableSlice(propValue interface{}) bool {
+	ty := reflect.TypeOf(propValue)
+	if ty.Kind() != reflect.Slice {
+		return false
+	}
+
+	// Check this propValue slice isn't a []byte.
+	return ty.Elem().Kind() != reflect.Uint8
+}
+
 func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 	indexesToRemove := map[int]struct{}{}
@@ -634,8 +644,9 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 			// Cater for entity property slices. If any of the elements in a
 			// slice is not a filter match then don't remove the entity from
-			// the iteration candidates.
-			if reflect.TypeOf(propValue).Kind() == reflect.Slice {
+			// the iteration candidates. Note that a []byte is not indexable
+			// and is treated as a single property.
+			if isIndexableSlice(propValue) {
 				shouldRemove := true
 				v := reflect.ValueOf(propValue)
 				for j := 0; j < v.Len(); j++ {

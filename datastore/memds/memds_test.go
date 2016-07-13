@@ -1,6 +1,7 @@
 package memds_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1069,7 +1070,6 @@ func TestAncestorQuery(t *testing.T) {
 		datastore.New(ctx),
 		memds.New(),
 	}
-	//ds := datastore.New(ctx)
 
 	type testEntity struct {
 		IntValue int64
@@ -1125,5 +1125,40 @@ func TestAncestorQuery(t *testing.T) {
 		t.Fatal(err)
 	} else if key != nil {
 		t.Fatal("expected nil key")
+	}
+}
+
+func TestByteSliceProperties(t *testing.T) {
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
+
+	ds := &compareDs{
+		datastore.New(ctx),
+		memds.New(),
+	}
+
+	// []byte should be treated as a single property like string, not a slice.
+	type testEntity struct {
+		ByteValue []byte `datastore:",noindex"`
+	}
+
+	key := datastore.NewKey("").IntID("Kind", 3)
+	byteValue := []byte("hi there")
+	putEntity := &testEntity{
+		ByteValue: byteValue,
+	}
+
+	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	getEntity := &testEntity{}
+	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(getEntity.ByteValue, byteValue) {
+		t.Fatal("incorrect byte values", getEntity.ByteValue)
 	}
 }
