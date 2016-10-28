@@ -1,24 +1,15 @@
 package nds
 
 import (
-	"github.com/qedus/appengine/datastore"
-	ids "github.com/qedus/appengine/internal/datastore"
+	"github.com/qedus/appengine/ds"
 	aends "github.com/qedus/nds"
-	"golang.org/x/net/context"
-	aeds "google.golang.org/appengine/datastore"
 )
 
-func New(ctx context.Context) datastore.TransactionalDatastore {
-	cfg := ids.Config{
-		Get:    aends.GetMulti,
-		Put:    aends.PutMulti,
-		Delete: aends.DeleteMulti,
-		RunInTransaction: func(ctx context.Context,
-			f func(context.Context) error) error {
-			return aends.RunInTransaction(ctx,
-				f, &aeds.TransactionOptions{XG: true})
-		},
+func New() ds.Ds {
+	return &ds.DefaultDs{
+		GetFunc:              aends.GetMulti,
+		PutFunc:              aends.PutMulti,
+		DeleteFunc:           aends.DeleteMulti,
+		RunInTransactionFunc: aends.RunInTransaction,
 	}
-
-	return ids.New(ctx, cfg)
 }

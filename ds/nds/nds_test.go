@@ -1,25 +1,15 @@
 package nds_test
 
 import (
-	"bytes"
 	"errors"
-	"reflect"
 	"testing"
 
-	"github.com/qedus/appengine/datastore"
-	"github.com/qedus/appengine/datastore/nds"
-
+	"github.com/qedus/appengine/ds"
+	"github.com/qedus/appengine/ds/nds"
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/aetest"
 )
-
-func isNotFoundErr(err error, index int) bool {
-	nfe, ok := err.(interface {
-		NotFound(int) bool
-	})
-	return ok && nfe.NotFound(index)
-}
 
 func newContext(t *testing.T, stronglyConsistentDatastore bool) (
 	context.Context, func()) {
@@ -44,25 +34,25 @@ func TestPutGetDelete(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := nds.New(ctx)
+	ctx = ds.AddDs(ctx, nds.New())
 
 	type testEntity struct {
 		Value int64
 	}
 
 	const kind = "Test"
-	key := datastore.NewKey("").StringID(kind, "hi")
+	key := ds.NewKey("").Append(kind, "hi")
 
 	putEntity := &testEntity{
 		Value: 22,
 	}
-	if _, err := ds.Put([]datastore.Key{key},
+	if _, err := ds.Put(ctx, []ds.Key{key},
 		[]*testEntity{putEntity}); err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get([]datastore.Key{key}, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, []ds.Key{key}, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,32 +60,31 @@ func TestPutGetDelete(t *testing.T) {
 		t.Fatalf("entities not equivalent %+v vs %+v", putEntity, getEntity)
 	}
 
-	if err := ds.Delete([]datastore.Key{key}); err != nil {
+	if err := ds.Delete(ctx, []ds.Key{key}); err != nil {
 		t.Fatal(err)
 	}
 
-	nfe, ok := ds.Get([]datastore.Key{key},
-		[]*testEntity{&testEntity{}}).(interface {
-		NotFound(int) bool
-	})
-	if !ok {
-		t.Fatal("expected not found interface")
-	}
-	if !nfe.NotFound(0) {
-		t.Fatal("expected to have deleted entity")
+	err := ds.Get(ctx, []ds.Key{key}, []*testEntity{&testEntity{}})
+	if me, ok := err.(ds.Error); ok {
+		if me[0] != ds.ErrNoEntity {
+			t.Fatal("expected no entity error")
+		}
+	} else {
+		t.Fatal("expected ds.Error")
 	}
 
 	// Check index values have been deleted.
-	iter, err := ds.Run(datastore.Query{
-		Kind: kind,
-	})
+	q := ds.Query{
+		RootKey: ds.NewKey("").Append(kind, nil),
+	}
+	iter, err := ds.Run(ctx, q)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if key, err := iter.Next(&testEntity{}); err != nil {
 		t.Fatal(err)
-	} else if key != nil {
+	} else if !key.Equal(ds.Key{}) {
 		t.Fatal("expected no key")
 	}
 }
@@ -104,20 +93,20 @@ func TestTx(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := nds.New(ctx)
+	ctx = ds.AddDs(ctx, nds.New())
 
 	type testEntity struct {
 		Value int64
 	}
 
-	key := datastore.NewKey("").IntID("Test", 2)
+	key := ds.NewKey("").Append("Test", 2)
 	putEntity := &testEntity{
 		Value: 2,
 	}
 
 	// Test normal transactions work.
-	if err := ds.RunInTransaction(func(ds datastore.Datastore) error {
-		if _, err := ds.Put([]datastore.Key{key},
+	if err := ds.RunInTransaction(ctx, func(tctx context.Context) error {
+		if _, err := ds.Put(ctx, []ds.Key{key},
 			[]*testEntity{putEntity}); err != nil {
 			return err
 		}
@@ -127,7 +116,7 @@ func TestTx(t *testing.T) {
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get([]datastore.Key{key}, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, []ds.Key{key}, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 	if getEntity.Value != 2 {
@@ -136,8 +125,8 @@ func TestTx(t *testing.T) {
 
 	// Try to delete entity but raise error instead.
 	expectedErr := errors.New("expected error")
-	if err := ds.RunInTransaction(func(ds datastore.Datastore) error {
-		if err := ds.Delete([]datastore.Key{key}); err != nil {
+	if err := ds.RunInTransaction(ctx, func(tctx context.Context) error {
+		if err := ds.Delete(tctx, []ds.Key{key}); err != nil {
 			return err
 		}
 		return expectedErr
@@ -147,22 +136,22 @@ func TestTx(t *testing.T) {
 
 	// Should still be able to get the entity.
 	getEntity = &testEntity{}
-	if err := ds.Get([]datastore.Key{key}, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, []ds.Key{key}, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 	if getEntity.Value != 2 {
 		t.Fatal("incorrect value")
 	}
 
-	if err := ds.RunInTransaction(func(ds datastore.Datastore) error {
-		return ds.Delete([]datastore.Key{key})
+	if err := ds.RunInTransaction(ctx, func(tctx context.Context) error {
+		return ds.Delete(tctx, []ds.Key{key})
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Now should not be able to get the entity.
-	if err := ds.Get([]datastore.Key{key},
-		[]*testEntity{&testEntity{}}); !isNotFoundErr(err, 0) {
+	err := ds.Get(ctx, []ds.Key{key}, []*testEntity{&testEntity{}})
+	if me, ok := err.(ds.Error); !ok && me[0] != ds.ErrNoEntity {
 		t.Fatal("expected not found error", err)
 	}
 }
@@ -171,11 +160,11 @@ func TestAllocateKeys(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ds := nds.New(ctx)
+	ctx = ds.AddDs(ctx, nds.New())
 
-	key := datastore.NewKey("ns").IntID("Parent", 2).IncompleteID("Test")
+	key := ds.NewKey("ns").Append("Parent", 2).Append("Test", nil)
 
-	keys, err := ds.AllocateKeys(key, 10)
+	keys, err := ds.AllocateKeys(ctx, key, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,16 +174,13 @@ func TestAllocateKeys(t *testing.T) {
 	}
 
 	for _, k := range keys {
-		if k.Namespace() != key.Namespace() {
+		if k.Namespace != key.Namespace {
 			t.Fatal("incorrect namespace")
 		}
-		if !k.Parent().Equal(key.Parent()) {
+		if k.Path[0] != key.Path[0] {
 			t.Fatal("incorrect parents: wanted", key, "got", k)
 		}
-		if k.Kind() != key.Kind() {
-			t.Fatal("incorrect kind")
-		}
-		if k.Incomplete() {
+		if k.Path[1].ID == nil {
 			t.Fatal("incomplete key")
 		}
 	}
@@ -204,14 +190,14 @@ func TestPutIncompleteKey(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
+	ctx = ds.AddDs(ctx, nds.New())
+
 	type testEntity struct {
 		Value int64
 	}
 
-	ds := nds.New(ctx)
-
-	key := datastore.NewKey("ns").IncompleteID("Kind")
-	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{&testEntity{4}})
+	key := ds.NewKey("ns").Append("Kind", nil)
+	keys, err := ds.Put(ctx, []ds.Key{key}, []*testEntity{&testEntity{4}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,18 +206,20 @@ func TestPutIncompleteKey(t *testing.T) {
 	}
 	key = keys[0]
 
-	if key.Incomplete() {
-		t.Fatal("incomplete key")
-	}
-
-	if key.Kind() != "Kind" {
+	if key.Path[0].Kind != "Kind" {
 		t.Fatal("incorrect kind")
 	}
 
-	if key.Namespace() != "ns" {
+	if key.Path[0].ID == nil {
+		t.Fatal("incomplete key")
+	}
+
+	if key.Namespace != "ns" {
 		t.Fatal("incorrect namespace")
 	}
 }
+
+/*
 
 func TestKeyField(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
@@ -424,3 +412,4 @@ func TestByteSliceProperties(t *testing.T) {
 		t.Fatal("incorrect byte values", getEntity.ByteValue)
 	}
 }
+*/
