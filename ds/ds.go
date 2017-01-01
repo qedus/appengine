@@ -146,41 +146,6 @@ type Query struct {
 	Filters []Filter
 }
 
-type contextKey int
-
-const (
-	dsSliceKey contextKey = iota
-)
-
-func AddDs(ctx context.Context, ds Ds) context.Context {
-	dsSlice, exists := ctx.Value(dsSliceKey).(*[]Ds)
-	if exists {
-		*dsSlice = append(*dsSlice, ds)
-		return ctx
-	}
-
-	return context.WithValue(ctx, dsSliceKey, &[]Ds{ds})
-}
-
-func ListDs(ctx context.Context) []Ds {
-	return *ctx.Value(dsSliceKey).(*[]Ds)
-}
-
-func RemoveDs(ctx context.Context, ds Ds) {
-	dsSlice, exists := ctx.Value(dsSliceKey).(*[]Ds)
-	if exists {
-		for i := range *dsSlice {
-			if (*dsSlice)[i] == ds {
-				// Done this way to prevent leakage of garbage.
-				copy((*dsSlice)[i:], (*dsSlice)[i+1:])
-				(*dsSlice)[len(*dsSlice)-1] = nil
-				*dsSlice = (*dsSlice)[:len(*dsSlice)-1]
-				break
-			}
-		}
-	}
-}
-
 type DefaultDs struct {
 	GetFunc func(context.Context, []*datastore.Key, interface{}) error
 	PutFunc func(context.Context, []*datastore.Key, interface{}) (
@@ -189,6 +154,8 @@ type DefaultDs struct {
 	RunInTransactionFunc func(context.Context,
 		func(context.Context) error, *datastore.TransactionOptions) error
 }
+
+var defaultDs = NewDs()
 
 func NewDs() Ds {
 	return &DefaultDs{
@@ -422,75 +389,47 @@ func (di *defaultIterator) Next(entity interface{}) (Key, error) {
 
 func (dds *DefaultDs) RunInTransaction(ctx context.Context,
 	f func(context.Context) error) error {
-
-	dsSlice := ListDs(ctx)
-
-	return dds.RunInTransactionFunc(ctx,
-		func(ctx context.Context) error {
-			for _, ds := range dsSlice {
-				ctx = AddDs(ctx, ds)
-			}
-			return f(ctx)
-		},
+	return dds.RunInTransactionFunc(ctx, f,
 		&datastore.TransactionOptions{
 			XG: true,
 		})
 }
 
-func loopDs(ctx context.Context, f func(ds Ds) error) error {
-	dsSlice, exists := ctx.Value(dsSliceKey).(*[]Ds)
-	if exists {
-		for _, ds := range *dsSlice {
-			if err := f(ds); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return errors.New("no implementation")
-}
-
 func Get(ctx context.Context, keys []Key, entities interface{}) error {
-	return loopDs(ctx, func(ds Ds) error {
-		return ds.Get(ctx, keys, entities)
-	})
+	return fromContext(ctx).Get(ctx, keys, entities)
 }
 
 func Put(ctx context.Context, keys []Key, entities interface{}) ([]Key, error) {
-	return keys, loopDs(ctx, func(ds Ds) error {
-		var err error
-		keys, err = ds.Put(ctx, keys, entities)
-		return err
-	})
+	return fromContext(ctx).Put(ctx, keys, entities)
 }
 
 func Delete(ctx context.Context, keys []Key) error {
-	return loopDs(ctx, func(ds Ds) error {
-		return ds.Delete(ctx, keys)
-	})
+	return fromContext(ctx).Delete(ctx, keys)
 }
 
 func AllocateKeys(ctx context.Context, parent Key, n int) ([]Key, error) {
-	var keys []Key
-	return keys, loopDs(ctx, func(ds Ds) error {
-		var err error
-		keys, err = ds.AllocateKeys(ctx, parent, n)
-		return err
-	})
+	return fromContext(ctx).AllocateKeys(ctx, parent, n)
 }
 
 func Run(ctx context.Context, q Query) (Iterator, error) {
-	var iter Iterator
-	return iter, loopDs(ctx, func(ds Ds) error {
-		var err error
-		iter, err = ds.Run(ctx, q)
-		return err
-	})
+	return fromContext(ctx).Run(ctx, q)
 }
 
 func RunInTransaction(ctx context.Context,
 	f func(context.Context) error) error {
-	return loopDs(ctx, func(ds Ds) error {
-		return ds.RunInTransaction(ctx, f)
-	})
+	return fromContext(ctx).RunInTransaction(ctx, f)
+}
+
+var contextKey = "ds context key"
+
+func NewContext(ctx context.Context, ds Ds) context.Context {
+	return context.WithValue(ctx, &contextKey, ds)
+}
+
+func fromContext(ctx context.Context) Ds {
+	ds, exists := ctx.Value(&contextKey).(Ds)
+	if exists {
+		return ds
+	}
+	return defaultDs
 }

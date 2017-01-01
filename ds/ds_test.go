@@ -36,34 +36,12 @@ func (ds *callCountDs) Get(ctx context.Context,
 	return nil
 }
 
-func TestAddRemoveDs(t *testing.T) {
-	ctx, closeFunc, err := aetest.NewContext()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeFunc()
-
-	cDs := &callCountDs{}
-	ctx = ds.AddDs(ctx, cDs)
-	ds.Get(ctx, nil, nil)
-
-	ds.RemoveDs(ctx, cDs)
-	ds.Get(ctx, nil, nil)
-
-	if cDs.getCount != 1 {
-		t.Fatal("expected only one call to get")
-	}
-}
-
 func TestDefaultDs(t *testing.T) {
 	ctx, closeFunc, err := aetest.NewContext()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeFunc()
-
-	dds := ds.NewDs()
-	ctx = ds.AddDs(ctx, dds)
 
 	key := ds.NewKey("").Append("TestKind", nil)
 
@@ -91,9 +69,6 @@ func TestRunInTransaction(t *testing.T) {
 	type testEntity struct {
 		Value int
 	}
-
-	dds := ds.NewDs()
-	ctx = ds.AddDs(ctx, dds)
 
 	if err := ds.RunInTransaction(ctx, func(tctx context.Context) error {
 		key := ds.NewKey("").Append("Test", 23)
