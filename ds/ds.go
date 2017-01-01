@@ -141,7 +141,9 @@ type Query struct {
 
 	KeysOnly bool
 
-	Conditions []interface{}
+	Orders []Order
+
+	Filters []Filter
 }
 
 type contextKey int
@@ -386,15 +388,12 @@ func (dds *DefaultDs) Run(ctx context.Context, q Query) (Iterator, error) {
 		aeQ = aeQ.KeysOnly()
 	}
 
-	for _, cond := range q.Conditions {
-		switch c := cond.(type) {
-		case Filter:
-			aeQ = aeQ.Filter(c.Name+string(c.Op), c.Value)
-		case Order:
-			aeQ = aeQ.Order(string(c.Dir) + c.Name)
-		default:
-			return nil, fmt.Errorf("unknown condition %T", c)
-		}
+	for _, order := range q.Orders {
+		aeQ = aeQ.Order(string(order.Dir) + order.Name)
+	}
+
+	for _, filter := range q.Filters {
+		aeQ = aeQ.Filter(filter.Name+string(filter.Op), filter.Value)
 	}
 
 	ctx, err := appengine.Namespace(ctx, q.RootKey.Namespace)
