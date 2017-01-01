@@ -137,7 +137,7 @@ const KeyName = "__key__"
 
 // Query is used to construct a datastore query.
 type Query struct {
-	RootKey Key
+	Root Key
 
 	KeysOnly bool
 
@@ -369,13 +369,13 @@ func (dds *DefaultDs) AllocateKeys(ctx context.Context, key Key, n int) (
 }
 
 func (dds *DefaultDs) Run(ctx context.Context, q Query) (Iterator, error) {
-	keyPath := q.RootKey.Path
+	keyPath := q.Root.Path
 	aeQ := datastore.NewQuery(keyPath[len(keyPath)-1].Kind)
 
 	if len(keyPath) > 1 {
 		ancestorKey := Key{
-			Namespace: q.RootKey.Namespace,
-			Path:      q.RootKey.Path[:len(q.RootKey.Path)-1],
+			Namespace: q.Root.Namespace,
+			Path:      q.Root.Path[:len(q.Root.Path)-1],
 		}
 		ancestorAEKey, err := keyToAEKey(ctx, ancestorKey)
 		if err != nil {
@@ -396,7 +396,7 @@ func (dds *DefaultDs) Run(ctx context.Context, q Query) (Iterator, error) {
 		aeQ = aeQ.Filter(filter.Name+string(filter.Op), filter.Value)
 	}
 
-	ctx, err := appengine.Namespace(ctx, q.RootKey.Namespace)
+	ctx, err := appengine.Namespace(ctx, q.Root.Namespace)
 	if err != nil {
 		return nil, err
 	}

@@ -75,7 +75,7 @@ func TestPutGetDelete(t *testing.T) {
 
 	// Check index values have been deleted.
 	q := ds.Query{
-		RootKey: ds.NewKey("").Append(kind, nil),
+		Root: ds.NewKey("").Append(kind, nil),
 	}
 	iter, err := ds.Run(ctx, q)
 	if err != nil {
