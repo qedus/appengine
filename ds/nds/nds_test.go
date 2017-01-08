@@ -34,7 +34,7 @@ func TestPutGetDelete(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ctx = ds.AddDs(ctx, nds.New())
+	ctx = ds.NewContext(ctx, nds.New())
 
 	type testEntity struct {
 		Value int64
@@ -93,7 +93,7 @@ func TestTx(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ctx = ds.AddDs(ctx, nds.New())
+	ctx = ds.NewContext(ctx, nds.New())
 
 	type testEntity struct {
 		Value int64
@@ -160,7 +160,7 @@ func TestAllocateKeys(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ctx = ds.AddDs(ctx, nds.New())
+	ctx = ds.NewContext(ctx, nds.New())
 
 	key := ds.NewKey("ns").Append("Parent", 2).Append("Test", nil)
 
@@ -190,7 +190,7 @@ func TestPutIncompleteKey(t *testing.T) {
 	ctx, closeFunc := newContext(t, false)
 	defer closeFunc()
 
-	ctx = ds.AddDs(ctx, nds.New())
+	ctx = ds.NewContext(ctx, nds.New())
 
 	type testEntity struct {
 		Value int64

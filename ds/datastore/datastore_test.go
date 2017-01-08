@@ -1,4 +1,4 @@
-package ds_test
+package datastore_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/qedus/appengine/ds"
+	"github.com/qedus/appengine/ds/datastore"
 	"google.golang.org/appengine/aetest"
 )
 
@@ -43,6 +44,8 @@ func TestDefaultDs(t *testing.T) {
 	}
 	defer closeFunc()
 
+	ctx = ds.NewContext(ctx, datastore.New())
+
 	key := ds.NewKey("").Append("TestKind", nil)
 
 	type testEntity struct {
@@ -65,6 +68,8 @@ func TestRunInTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeFunc()
+
+	ctx = ds.NewContext(ctx, datastore.New())
 
 	type testEntity struct {
 		Value int
