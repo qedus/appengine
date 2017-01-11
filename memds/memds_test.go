@@ -15,8 +15,8 @@ import (
 
 	"github.com/juju/testing/checkers"
 	"github.com/qedus/appengine/datastore"
-	"github.com/qedus/appengine/datastore/ds"
-	"github.com/qedus/appengine/datastore/memds"
+	"github.com/qedus/appengine/memds"
+	"github.com/qedus/ds"
 )
 
 func isNotFoundErr(err error, index int) bool {
@@ -47,15 +47,15 @@ func newContext(t *testing.T, stronglyConsistentDatastore bool) (
 
 // compareDs allows us to call the datastore with multiple different
 // implementations and compare the results.
-type compareDs []datastore.TransactionalDatastore
+type compareDs []ds.Ds
 
-func (cds *compareDs) AllocateKeys(key datastore.Key, n int) (
-	[]datastore.Key, error) {
+func (cds *compareDs) AllocateKeys(ctx context.Context, parent ds.Key, n int) (
+	[]ds.Key, error) {
 
-	compKeys := make([][]datastore.Key, len(*cds))
+	compKeys := make([][]ds.Key, len(*cds))
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		compKeys[i], compErrs[i] = ds.AllocateKeys(key, n)
+		compKeys[i], compErrs[i] = ds.AllocateKeys(ctx, parent, n)
 	}
 
 	//  Check the returned errors are the same for each datastore.
@@ -81,7 +81,8 @@ func (cds *compareDs) AllocateKeys(key datastore.Key, n int) (
 	return compKeys[0], nil
 }
 
-func (cds *compareDs) Get(keys []datastore.Key, entities interface{}) error {
+func (cds *compareDs) Get(ctx context.Context,
+	keys []ds.Key, entities interface{}) error {
 
 	ty := reflect.TypeOf(entities)
 
@@ -113,7 +114,7 @@ func (cds *compareDs) Get(keys []datastore.Key, entities interface{}) error {
 
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		compErrs[i] = ds.Get(keys, compEntities[i])
+		compErrs[i] = ds.Get(ctx, keys, compEntities[i])
 	}
 
 	//  Check the returned errors are the same for each datastore.
@@ -158,13 +159,14 @@ func (cds *compareDs) Get(keys []datastore.Key, entities interface{}) error {
 	return compErrs[0]
 }
 
-func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
-	[]datastore.Key, error) {
+func (cds *compareDs) Put(ctx context.Context,
+	keys []ds.Key, entities interface{}) ([]ds.Key, error) {
 
 	// Allocate IDs if any keys are incomplete.
 	for i, key := range keys {
-		if key.Incomplete() {
-			completeKeys, err := cds.AllocateKeys(key, 1)
+		keyIsIncomplete := key.Path[len(key.Path)-1].ID == nil
+		if keyIsIncomplete {
+			completeKeys, err := cds.AllocateKeys(ctx, key, 1)
 			if err != nil {
 				return nil, err
 			}
@@ -172,10 +174,10 @@ func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 		}
 	}
 
-	compKeys := make([][]datastore.Key, len(*cds))
+	compKeys := make([][]ds.Key, len(*cds))
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		compKeys[i], compErrs[i] = ds.Put(keys, entities)
+		compKeys[i], compErrs[i] = ds.Put(ctx, keys, entities)
 	}
 
 	//  Check the returned errors are the same for each datastore.
@@ -199,7 +201,8 @@ func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 			continue
 		}
 		for j, key := range ck {
-			if keys[j].Incomplete() {
+			keyIsIncomplete := key.Path[len(key.Path)-1].ID == nil
+			if keyIsIncomplete {
 				// Don't worying about comparing keys if they were previously
 				// incomplete as we can't predict which IDs will be used by the
 				// varous datastores that might be used.
@@ -215,11 +218,11 @@ func (cds *compareDs) Put(keys []datastore.Key, entities interface{}) (
 	return compKeys[0], compErrs[0]
 }
 
-func (cds *compareDs) Delete(keys []datastore.Key) error {
+func (cds *compareDs) Delete(ctx context.Context, keys []ds.Key) error {
 
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		compErrs[i] = ds.Delete(keys)
+		compErrs[i] = ds.Delete(ctx, keys)
 	}
 
 	//  Check the returned errors are the same for each datastore.
@@ -236,9 +239,9 @@ func (cds *compareDs) Delete(keys []datastore.Key) error {
 	return compErrs[0]
 }
 
-type compIterator []datastore.Iterator
+type compIterator []ds.Iterator
 
-func (ci *compIterator) Next(entity interface{}) (datastore.Key, error) {
+func (ci *compIterator) Next(entity interface{}) (ds.Key, error) {
 
 	compEntities := make([]interface{}, len(*ci))
 
@@ -251,7 +254,7 @@ func (ci *compIterator) Next(entity interface{}) (datastore.Key, error) {
 		compEntities[0] = entity
 	}
 
-	compKeys := make([]datastore.Key, len(*ci))
+	compKeys := make([]ds.Key, len(*ci))
 	compErrs := make([]error, len(*ci))
 	for i, iter := range *ci {
 		compKeys[i], compErrs[i] = iter.Next(compEntities[i])
@@ -263,25 +266,27 @@ func (ci *compIterator) Next(entity interface{}) (datastore.Key, error) {
 			break
 		}
 		if !reflect.DeepEqual(ce, compErrs[i+1]) {
-			return nil, fmt.Errorf("iter errors not the same %+v vs %+v",
+			return ds.Key{}, fmt.Errorf("iter errors not the same %+v vs %+v",
 				ce, compErrs[i+1])
 		}
 	}
+
+	zeroKey := ds.Key{}
 
 	// Check the returned keys are the same for each datastore.
 	for i, ck := range compKeys {
 		if i >= len(compKeys)-1 {
 			break
 		}
-		if ck == nil && compKeys[i+1] == nil {
+		if ck.Equal(zeroKey) && compKeys[i+1].Equal(zeroKey) {
 			continue
-		} else if ck == nil || compKeys[i+1] == nil {
-			return nil, fmt.Errorf("iter keys not equal %+v vs %+v",
+		} else if ck.Equal(zeroKey) || compKeys[i+1].Equal(zeroKey) {
+			return ds.Key{}, fmt.Errorf("iter keys not equal %+v vs %+v",
 				ck, compKeys[i+1])
 		}
 
 		if !ck.Equal(compKeys[i+1]) {
-			return nil, fmt.Errorf("iter keys not equal %+v vs %+v",
+			return ds.Key{}, fmt.Errorf("iter keys not equal %+v vs %+v",
 				ck, compKeys[i+1])
 		}
 	}
@@ -292,7 +297,7 @@ func (ci *compIterator) Next(entity interface{}) (datastore.Key, error) {
 			break
 		}
 		if !reflect.DeepEqual(ce, compEntities[i+1]) {
-			return nil, fmt.Errorf("iter entities not equal %+v vs %+v",
+			return zeroKey, fmt.Errorf("iter entities not equal %+v vs %+v",
 				ce, compEntities[i+1])
 		}
 	}
@@ -301,12 +306,13 @@ func (ci *compIterator) Next(entity interface{}) (datastore.Key, error) {
 	return compKeys[0], compErrs[0]
 }
 
-func (cds *compareDs) Run(q datastore.Query) (datastore.Iterator, error) {
+func (cds *compareDs) Run(ctx context.Context, q ds.Query) (
+	ds.Iterator, error) {
 
 	iters := make(compIterator, len(*cds))
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		iters[i], compErrs[i] = ds.Run(q)
+		iters[i], compErrs[i] = ds.Run(ctx, q)
 	}
 
 	for i, ce := range compErrs {
@@ -321,11 +327,12 @@ func (cds *compareDs) Run(q datastore.Query) (datastore.Iterator, error) {
 	return &iters, compErrs[0]
 }
 
-func (cds *compareDs) RunInTransaction(f func(ds datastore.Datastore) error) error {
+func (cds *compareDs) RunInTransaction(ctx context.Context,
+	f func(context.Context) error) error {
 
 	compErrs := make([]error, len(*cds))
 	for i, ds := range *cds {
-		compErrs[i] = ds.RunInTransaction(f)
+		compErrs[i] = ds.RunInTransaction(ctx, f)
 	}
 
 	//  Check the returned errors are the same for each datastore.
@@ -345,26 +352,28 @@ func TestPutGetDelete(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
+	cds := &compareDs{
 		memds.New(),
-		ds.New(ctx),
+		datastore.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		Value int64
 	}
 
 	const kind = "Test"
-	key := datastore.NewKey("").StringID(kind, "hi")
+	key := ds.NewKey("").Append(kind, "hi")
 
 	putEntity := &testEntity{22}
-	if _, err := ds.Put([]datastore.Key{key},
+	if _, err := ds.Put(ctx, []ds.Key{key},
 		[]*testEntity{putEntity}); err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get([]datastore.Key{key},
+	if err := ds.Get(ctx, []ds.Key{key},
 		[]*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
@@ -373,18 +382,18 @@ func TestPutGetDelete(t *testing.T) {
 		t.Fatalf("entities not equivalent %+v vs %+v", putEntity, getEntity)
 	}
 
-	if err := ds.Delete([]datastore.Key{key}); err != nil {
+	if err := ds.Delete(ctx, []ds.Key{key}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := ds.Get([]datastore.Key{key},
+	if err := ds.Get(ctx, []ds.Key{key},
 		[]*testEntity{&testEntity{}}); !isNotFoundErr(err, 0) {
 		t.Fatal("expected to have deleted entity:", err)
 	}
 
 	// Check index values have been deleted.
-	iter, err := ds.Run(datastore.Query{
-		Kind: kind,
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("").Append(kind, nil),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +401,7 @@ func TestPutGetDelete(t *testing.T) {
 
 	if key, err := iter.Next(&testEntity{}); err != nil {
 		t.Fatal(err)
-	} else if key != nil {
+	} else if key.Equal(ds.Key{}) {
 		t.Fatal("expected no key")
 	}
 }
@@ -402,45 +411,47 @@ func TestTx(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
+	cds := &compareDs{
 		memds.New(),
-		ds.New(ctx),
+		datastore.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		Value int64
 	}
 
-	key := datastore.NewKey("").StringID("Test", "up")
+	key := ds.NewKey("").Append("Test", "up")
 
-	if _, err := ds.Put([]datastore.Key{key},
+	if _, err := ds.Put(ctx, []ds.Key{key},
 		[]*testEntity{&testEntity{3}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Check delete doesn't work as we are returning an error.
 	expectedErr := errors.New("expected error")
-	if err := ds.RunInTransaction(func(txDs datastore.Datastore) error {
-		if err := txDs.Delete([]datastore.Key{key}); err != nil {
+	if err := ds.RunInTransaction(ctx, func(ctx context.Context) error {
+		if err := ds.Delete(ctx, []ds.Key{key}); err != nil {
 			t.Fatal(err)
 		}
 		return expectedErr
 	}); err != expectedErr {
 		t.Fatal("expected", expectedErr, "got", err)
 	}
-	if err := ds.Get([]datastore.Key{key},
+	if err := ds.Get(ctx, []ds.Key{key},
 		[]*testEntity{&testEntity{}}); err != nil {
 		t.Fatal("expected an entity", err)
 	}
 
 	// Check delete does work now.
-	if err := ds.RunInTransaction(func(txDs datastore.Datastore) error {
-		return txDs.Delete([]datastore.Key{key})
+	if err := ds.RunInTransaction(ctx, func(ctx context.Context) error {
+		return ds.Delete(ctx, []ds.Key{key})
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := ds.Get([]datastore.Key{key},
+	if err := ds.Get(ctx, []ds.Key{key},
 		[]*testEntity{&testEntity{}}); err == nil {
 		t.Fatal("expected an error")
 	}
@@ -451,37 +462,39 @@ func TestQueryEqualFilter(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		Value int64
 	}
 
 	for i := 0; i < 10; i++ {
-		key := datastore.NewKey("").StringID("Test", strconv.Itoa(i))
+		key := ds.NewKey("").Append("Test", strconv.Itoa(i))
 		entity := &testEntity{
 			Value: int64(i),
 		}
-		if _, err := ds.Put([]datastore.Key{key},
+		if _, err := ds.Put(ctx, []ds.Key{key},
 			[]*testEntity{entity}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	q := datastore.Query{
-		Kind: "Test",
-		Orders: []datastore.Order{
-			{"Value", datastore.AscDir},
+	q := ds.Query{
+		Root: ds.NewKey("").Append("Test", nil),
+		Orders: []ds.Order{
+			{"Value", ds.AscDir},
 		},
-		Filters: []datastore.Filter{
-			{"Value", datastore.EqualOp, int64(3)},
+		Filters: []ds.Filter{
+			{"Value", ds.EqualOp, int64(3)},
 		},
 	}
 
-	iter, err := ds.Run(q)
+	iter, err := ds.Run(ctx, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +504,7 @@ func TestQueryEqualFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key == nil {
+	if key.Equal(ds.Key{}) {
 		t.Fatal("expected key")
 	}
 	if queryEntity.Value != 3 {
@@ -503,7 +516,7 @@ func TestQueryEqualFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != nil {
+	if key.Equal(ds.Key{}) {
 		t.Fatal("expected no key", key)
 	}
 }
@@ -513,31 +526,33 @@ func TestQueryOrder(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
+	cds := &compareDs{
 		memds.New(),
-		ds.New(ctx),
+		datastore.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		Value int64
 	}
 
 	for i := 0; i < 10; i++ {
-		key := datastore.NewKey("").StringID("Test", strconv.Itoa(i))
-		if _, err := ds.Put([]datastore.Key{key},
+		key := ds.NewKey("").Append("Test", strconv.Itoa(i))
+		if _, err := ds.Put(ctx, []ds.Key{key},
 			[]*testEntity{&testEntity{int64(i)}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	q := datastore.Query{
-		Kind: "Test",
-		Orders: []datastore.Order{
-			{"Value", datastore.DescDir},
+	q := ds.Query{
+		Root: ds.NewKey("").Append("Test", nil),
+		Orders: []ds.Order{
+			{"Value", ds.DescDir},
 		},
 	}
 
-	iter, err := ds.Run(q)
+	iter, err := ds.Run(ctx, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +563,7 @@ func TestQueryOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			t.Fatal("expected key")
 		}
 		if te.Value != int64(9-i) {
@@ -561,18 +576,21 @@ func TestQueryOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != nil {
+	if !key.Equal(ds.Key{}) {
 		t.Fatal("expected no key", key)
 	}
 }
 
 func TestAllocateKeys(t *testing.T) {
 
-	ds := memds.New()
+	ctx, closeFunc := newContext(t, true)
+	defer closeFunc()
 
-	key := datastore.NewKey("ns").IntID("Parent", 2).IncompleteID("Test")
+	ctx = ds.NewContext(ctx, memds.New())
 
-	keys, err := ds.AllocateKeys(key, 10)
+	parent := ds.NewKey("ns").Append("Parent", 2).Append("Test", nil)
+
+	keys, err := ds.AllocateKeys(ctx, parent, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,17 +600,14 @@ func TestAllocateKeys(t *testing.T) {
 	}
 
 	for _, k := range keys {
-		if k.Namespace() != key.Namespace() {
-			t.Fatal("incorrect namespace")
-		}
-		if !k.Parent().Equal(key.Parent()) {
-			t.Fatal("incorrect parents: wanted", key, "got", k)
-		}
-		if k.Kind() != key.Kind() {
-			t.Fatal("incorrect kind")
-		}
-		if k.Incomplete() {
+		if k.Path[len(k.Path)-1].ID == nil {
 			t.Fatal("incomplete key")
+		}
+
+		k.Path[len(k.Path)-1].ID = nil
+
+		if !k.Equal(parent) {
+			t.Fatal("incomplete key not same as parent")
 		}
 	}
 }
@@ -602,10 +617,12 @@ func TestComplexValueSortOrder(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testString struct {
 		Value string
@@ -620,7 +637,7 @@ func TestComplexValueSortOrder(t *testing.T) {
 	}
 
 	type testKey struct {
-		Value datastore.Key
+		Value ds.Key
 	}
 
 	type testTime struct {
@@ -631,34 +648,34 @@ func TestComplexValueSortOrder(t *testing.T) {
 		Value bool
 	}
 
-	keys := []datastore.Key{
-		datastore.NewKey("").StringID("Entity", "string"),
-		datastore.NewKey("").StringID("Entity", "int"),
-		datastore.NewKey("").StringID("Entity", "flaot"),
-		datastore.NewKey("").StringID("Entity", "key"),
-		datastore.NewKey("").StringID("Entity", "time"),
-		datastore.NewKey("").StringID("Entity", "bool-true"),
-		datastore.NewKey("").StringID("Entity", "bool-false"),
+	keys := []ds.Key{
+		ds.NewKey("").Append("Entity", "string"),
+		ds.NewKey("").Append("Entity", "int"),
+		ds.NewKey("").Append("Entity", "flaot"),
+		ds.NewKey("").Append("Entity", "key"),
+		ds.NewKey("").Append("Entity", "time"),
+		ds.NewKey("").Append("Entity", "bool-true"),
+		ds.NewKey("").Append("Entity", "bool-false"),
 	}
 	entities := []interface{}{
 		&testString{"value"},
 		&testInt{23},
 		&testFloat{23.2},
-		&testKey{datastore.NewKey("").StringID("KeyValue", "k")},
+		&testKey{ds.NewKey("").Append("KeyValue", "k")},
 		&testTime{time.Unix(123456, 123456)},
 		&testBool{true},
 		&testBool{false},
 	}
 
-	if _, err := ds.Put(keys, entities); err != nil {
+	if _, err := ds.Put(ctx, keys, entities); err != nil {
 		t.Fatal(err)
 	}
 
-	iter, err := ds.Run(datastore.Query{
-		Kind:     "Entity",
+	iter, err := ds.Run(ctx, ds.Query{
+		Root:     ds.NewKey("").Append("Entity", nil),
 		KeysOnly: true,
-		Orders: []datastore.Order{
-			{"Value", datastore.AscDir},
+		Orders: []ds.Order{
+			{"Value", ds.AscDir},
 		},
 	})
 	if err != nil {
@@ -672,11 +689,11 @@ func TestComplexValueSortOrder(t *testing.T) {
 		}
 	}
 
-	iter, err = ds.Run(datastore.Query{
-		Kind:     "Entity",
+	iter, err = ds.Run(ctx, ds.Query{
+		Root:     ds.NewKey("").Append("Entity", nil),
 		KeysOnly: true,
-		Orders: []datastore.Order{
-			{"Value", datastore.DescDir},
+		Orders: []ds.Order{
+			{"Value", ds.DescDir},
 		},
 	})
 	if err != nil {
@@ -695,30 +712,32 @@ func TestKeyField(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
 
+	ctx = ds.NewContext(ctx, cds)
+
 	type testEntity struct {
 		IntValue int64
-		KeyValue datastore.Key
+		KeyValue ds.Key
 	}
 
-	key := datastore.NewKey("ns").IntID("Test", 2)
-	keyValue := datastore.NewKey("ns").StringID("Value", "three")
+	key := ds.NewKey("ns").Append("Test", 2)
+	keyValue := ds.NewKey("ns").Append("Value", "three")
 	putEntity := &testEntity{
 		IntValue: 5,
 		KeyValue: keyValue,
 	}
 
-	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	keys, err := ds.Put(ctx, []ds.Key{key}, []*testEntity{putEntity})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, keys, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 	if getEntity.IntValue != putEntity.IntValue {
@@ -729,14 +748,13 @@ func TestKeyField(t *testing.T) {
 	}
 
 	// Now query for the key.
-	q := datastore.Query{
-		Namespace: "ns",
-		Kind:      "Test",
-		Filters: []datastore.Filter{
-			{"KeyValue", datastore.EqualOp, keyValue},
+	q := ds.Query{
+		Root: ds.NewKey("ns").Append("Test", nil),
+		Filters: []ds.Filter{
+			{"KeyValue", ds.EqualOp, keyValue},
 		},
 	}
-	iter, err := ds.Run(q)
+	iter, err := ds.Run(ctx, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,27 +781,29 @@ func TestKeyOrder(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
 
+	ctx = ds.NewContext(ctx, cds)
+
 	type testEntity struct {
-		KeyValue datastore.Key
+		KeyValue ds.Key
 	}
 
-	keys := []datastore.Key{
+	keys := []ds.Key{
 		// Check the difference between string and integer IDs.
-		datastore.NewKey("a").IntID("Test", 2),
-		datastore.NewKey("a").StringID("Test", "2"),
+		ds.NewKey("a").Append("Test", 2),
+		ds.NewKey("a").Append("Test", "2"),
 
 		// Check namespaces are isolated.
-		datastore.NewKey("").IntID("Test", 2),
-		datastore.NewKey("b").IntID("Test", 2),
+		ds.NewKey("").Append("Test", 2),
+		ds.NewKey("b").Append("Test", 2),
 
 		// Check key heirachy is ordered correctly.
-		datastore.NewKey("a").IntID("Parent", 1).IntID("Test", 2),
-		datastore.NewKey("a").IntID("Parent", 2).IntID("Test", 2),
+		ds.NewKey("a").Append("Parent", 1).Append("Test", 2),
+		ds.NewKey("a").Append("Parent", 2).Append("Test", 2),
 	}
 
 	// Make the entity keys the same as the key values to simplify testing both
@@ -795,17 +815,16 @@ func TestKeyOrder(t *testing.T) {
 		}
 	}
 
-	keys, err := ds.Put(keys, entities)
+	keys, err := ds.Put(ctx, keys, entities)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Ascending by key value.
-	iter, err := ds.Run(datastore.Query{
-		Namespace: "a",
-		Kind:      "Test",
-		Orders: []datastore.Order{
-			{"KeyValue", datastore.AscDir},
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("a").Append("Test", nil),
+		Orders: []ds.Order{
+			{"KeyValue", ds.AscDir},
 		},
 	})
 
@@ -816,17 +835,16 @@ func TestKeyOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			break
 		}
 	}
 
 	// Descending by key value.
-	iter, err = ds.Run(datastore.Query{
-		Namespace: "a",
-		Kind:      "Test",
-		Orders: []datastore.Order{
-			{"KeyValue", datastore.DescDir},
+	iter, err = ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("a").Append("Test", nil),
+		Orders: []ds.Order{
+			{"KeyValue", ds.DescDir},
 		},
 	})
 	if err != nil {
@@ -840,7 +858,7 @@ func TestKeyOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			break
 		}
 	}
@@ -848,11 +866,10 @@ func TestKeyOrder(t *testing.T) {
 	// Now check the same thing works with the actual entity keys.
 
 	// Ascending by key.
-	iter, err = ds.Run(datastore.Query{
-		Namespace: "a",
-		Kind:      "Test",
-		Orders: []datastore.Order{
-			{datastore.KeyName, datastore.AscDir},
+	iter, err = ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("a").Append("Test", nil),
+		Orders: []ds.Order{
+			{"__key__", ds.AscDir},
 		},
 	})
 	if err != nil {
@@ -866,17 +883,16 @@ func TestKeyOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			break
 		}
 	}
 
 	// Descending by key value.
-	iter, err = ds.Run(datastore.Query{
-		Namespace: "a",
-		Kind:      "Test",
-		Orders: []datastore.Order{
-			{datastore.KeyName, datastore.DescDir},
+	iter, err = ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("a").Append("Test", nil),
+		Orders: []ds.Order{
+			{"__key__", ds.DescDir},
 		},
 	})
 	if err != nil {
@@ -890,7 +906,7 @@ func TestKeyOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			break
 		}
 	}
@@ -901,26 +917,27 @@ func TestIntIDKeyOrder(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
 
-	keys := make([]datastore.Key, 10)
+	ctx = ds.NewContext(ctx, cds)
+
+	keys := make([]ds.Key, 10)
 	for i := range keys {
-		keys[i] = datastore.NewKey("test").IntID("Test", int64(i+1))
+		keys[i] = ds.NewKey("test").Append("Test", int64(i+1))
 	}
 	entities := make([]struct{}, len(keys))
 
-	if _, err := ds.Put(keys, entities); err != nil {
+	if _, err := ds.Put(ctx, keys, entities); err != nil {
 		t.Fatal(err)
 	}
 
-	iter, err := ds.Run(datastore.Query{
-		Namespace: "test",
-		Kind:      "Test",
-		Orders: []datastore.Order{
-			{datastore.KeyName, datastore.DescDir},
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("test").Append("Test", nil),
+		Orders: []ds.Order{
+			{"__key__", ds.DescDir},
 		},
 		KeysOnly: true,
 	})
@@ -932,8 +949,8 @@ func TestIntIDKeyOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key.ID().(int64) != 10 {
-		t.Fatal("expected 10 got", key.ID())
+	if key.Path[len(key.Path)-1].ID.(int64) != 10 {
+		t.Fatal("expected 10 got", key.Path[len(key.Path)-1].ID)
 	}
 }
 
@@ -941,29 +958,31 @@ func TestStructTags(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		ExcludeValue int64  `datastore:"-"`
 		RenameValue  string `datastore:"newname"`
 	}
 
-	key := datastore.NewKey("ns").IncompleteID("Kind")
+	key := ds.NewKey("ns").Append("Kind", nil)
 	putEntity := &testEntity{
 		ExcludeValue: 20,
 		RenameValue:  "hi there",
 	}
 
-	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	keys, err := ds.Put(ctx, []ds.Key{key}, []*testEntity{putEntity})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, keys, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -975,11 +994,10 @@ func TestStructTags(t *testing.T) {
 	}
 
 	// Query for the renamed value.
-	iter, err := ds.Run(datastore.Query{
-		Namespace: "ns",
-		Kind:      "Kind",
-		Filters: []datastore.Filter{
-			{"newname", datastore.EqualOp, "hi there"},
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("ns").Append("Kind", nil),
+		Filters: []ds.Filter{
+			{"newname", ds.EqualOp, "hi there"},
 		},
 	})
 	if err != nil {
@@ -990,7 +1008,7 @@ func TestStructTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key == nil {
+	if key.Equal(ds.Key{}) {
 		t.Fatal("key is nil")
 	}
 	if !key.Equal(keys[0]) {
@@ -1009,28 +1027,30 @@ func TestSliceProperties(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		IntValues []int64
 	}
 
-	key := datastore.NewKey("").IntID("Kind", 3)
+	key := ds.NewKey("").Append("Kind", 3)
 	intValues := []int64{1, 2, 3, 4}
 	putEntity := &testEntity{
 		IntValues: intValues,
 	}
 
-	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	keys, err := ds.Put(ctx, []ds.Key{key}, []*testEntity{putEntity})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, keys, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1038,13 +1058,13 @@ func TestSliceProperties(t *testing.T) {
 		t.Fatal("incorrect int64 values", getEntity.IntValues)
 	}
 
-	iter, err := ds.Run(datastore.Query{
-		Kind: "Kind",
-		Filters: []datastore.Filter{
-			{"IntValues", datastore.GreaterThanOp, int64(2)},
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("").Append("Kind", nil),
+		Filters: []ds.Filter{
+			{"IntValues", ds.GreaterThanOp, int64(2)},
 		},
-		Orders: []datastore.Order{
-			{"IntValues", datastore.AscDir},
+		Orders: []ds.Order{
+			{"IntValues", ds.AscDir},
 		},
 	})
 	if err != nil {
@@ -1057,7 +1077,7 @@ func TestSliceProperties(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if key == nil {
+		if key.Equal(ds.Key{}) {
 			break
 		}
 	}
@@ -1067,32 +1087,33 @@ func TestAncestorQuery(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	type testEntity struct {
 		IntValue int64
 	}
 
-	keys := []datastore.Key{
-		datastore.NewKey("").IntID("Parent", 1).IntID("Child", 1),
-		datastore.NewKey("").IntID("Parent", 2).IntID("Child", 2),
-		datastore.NewKey("").IntID("Parent", 1).IntID("Child", 3),
-		datastore.NewKey("").IntID("Child", 4),
+	keys := []ds.Key{
+		ds.NewKey("").Append("Parent", 1).Append("Child", 1),
+		ds.NewKey("").Append("Parent", 2).Append("Child", 2),
+		ds.NewKey("").Append("Parent", 1).Append("Child", 3),
+		ds.NewKey("").Append("Child", 4),
 	}
 	putEntities := []*testEntity{{1}, {2}, {3}, {4}}
 
-	if _, err := ds.Put(keys, putEntities); err != nil {
+	if _, err := ds.Put(ctx, keys, putEntities); err != nil {
 		t.Fatal(err)
 	}
 
-	iter, err := ds.Run(datastore.Query{
-		Kind:     "Child",
-		Ancestor: datastore.NewKey("").IntID("Parent", 1),
-		Orders: []datastore.Order{
-			{datastore.KeyName, datastore.DescDir},
+	iter, err := ds.Run(ctx, ds.Query{
+		Root: ds.NewKey("").Append("Parent", 1).Append("Child", nil),
+		Orders: []ds.Order{
+			{"__key__", ds.DescDir},
 		},
 	})
 	if err != nil {
@@ -1102,7 +1123,7 @@ func TestAncestorQuery(t *testing.T) {
 	iterEntity := &testEntity{}
 	if key, err := iter.Next(iterEntity); err != nil {
 		t.Fatal(err)
-	} else if key == nil {
+	} else if key.Equal(ds.Key{}) {
 		t.Fatal("no data")
 	} else if !key.Equal(keys[2]) {
 		t.Fatal("keys not equal")
@@ -1114,7 +1135,7 @@ func TestAncestorQuery(t *testing.T) {
 	iterEntity = &testEntity{}
 	if key, err := iter.Next(iterEntity); err != nil {
 		t.Fatal(err)
-	} else if key == nil {
+	} else if key.Equal(ds.Key{}) {
 		t.Fatal("no data")
 	} else if !key.Equal(keys[0]) {
 		t.Fatal("keys not equal")
@@ -1124,7 +1145,7 @@ func TestAncestorQuery(t *testing.T) {
 
 	if key, err := iter.Next(&testEntity{}); err != nil {
 		t.Fatal(err)
-	} else if key != nil {
+	} else if !key.Equal(ds.Key{}) {
 		t.Fatal("expected nil key")
 	}
 }
@@ -1133,29 +1154,31 @@ func TestByteSliceProperties(t *testing.T) {
 	ctx, closeFunc := newContext(t, true)
 	defer closeFunc()
 
-	ds := &compareDs{
-		ds.New(ctx),
+	cds := &compareDs{
+		datastore.New(),
 		memds.New(),
 	}
+
+	ctx = ds.NewContext(ctx, cds)
 
 	// []byte should be treated as a single property like string, not a slice.
 	type testEntity struct {
 		ByteValue []byte `datastore:",noindex"`
 	}
 
-	key := datastore.NewKey("").IntID("Kind", 3)
+	key := ds.NewKey("").Append("Kind", 3)
 	byteValue := []byte("hi there")
 	putEntity := &testEntity{
 		ByteValue: byteValue,
 	}
 
-	keys, err := ds.Put([]datastore.Key{key}, []*testEntity{putEntity})
+	keys, err := ds.Put(ctx, []ds.Key{key}, []*testEntity{putEntity})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	getEntity := &testEntity{}
-	if err := ds.Get(keys, []*testEntity{getEntity}); err != nil {
+	if err := ds.Get(ctx, keys, []*testEntity{getEntity}); err != nil {
 		t.Fatal(err)
 	}
 

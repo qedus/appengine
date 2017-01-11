@@ -5,8 +5,8 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/qedus/appengine/ds"
-	"github.com/qedus/appengine/ds/datastore"
+	"github.com/qedus/appengine/datastore"
+	"github.com/qedus/ds"
 	"google.golang.org/appengine/aetest"
 )
 

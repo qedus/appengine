@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qedus/appengine/datastore"
-	ids "github.com/qedus/appengine/internal/datastore"
+	"github.com/qedus/ds"
+	"golang.org/x/net/context"
 )
 
+/*
 type notFoundError map[int]bool
 
 func (nfe notFoundError) Error() string {
@@ -22,17 +23,20 @@ func (nfe notFoundError) NotFound(index int) bool {
 	return nfe[index]
 }
 
+*/
 type keyEntity struct {
-	key    datastore.Key
+	key    ds.Key
 	entity interface{}
 }
 
+/*
 type keyValue struct {
 	key   datastore.Key
 	value interface{}
 }
+*/
 
-type ds struct {
+type memDs struct {
 	keyEntities []keyEntity
 	lastIntID   int64
 }
@@ -40,15 +44,15 @@ type ds struct {
 // New creates a new TransationalDatastore that resides solely in memory. It is
 // useful for fast unit testing datastore code compared to using
 // google.golang.org/appengine/aetest.
-func New() datastore.TransactionalDatastore {
-	return &ds{
+func New() ds.Ds {
+	return &memDs{
 		keyEntities: []keyEntity{},
 	}
 }
 
-func (ds *ds) nextIntID() int64 {
-	ds.lastIntID++
-	return ds.lastIntID
+func (mds *memDs) nextIntID() int64 {
+	mds.lastIntID++
+	return mds.lastIntID
 }
 
 func extractStruct(entity interface{}) (reflect.Value, error) {
@@ -67,41 +71,49 @@ func extractStruct(entity interface{}) (reflect.Value, error) {
 	return val, nil
 }
 
-func (ds *ds) Get(keys []datastore.Key, entities interface{}) error {
+func (mds *memDs) Get(ctx context.Context,
+	keys []ds.Key, entities interface{}) error {
+
 	values := reflect.ValueOf(entities)
 
 	if err := verifyKeysValues(keys, values); err != nil {
 		return err
 	}
 
-	nfe := notFoundError{}
+	sparseErrs := make(map[int]error)
 	for i, key := range keys {
 		value := values.Index(i)
 
-		found, err := ds.get(key, value.Interface())
+		found, err := mds.get(key, value.Interface())
 		if err != nil {
-			return err
+			sparseErrs[i] = err
+			continue
 		}
 		if !found {
-			nfe[i] = true
+			sparseErrs[i] = ds.ErrNoEntity
 		}
 	}
 
-	if len(nfe) == 0 {
+	if len(sparseErrs) == 0 {
 		return nil
 	}
 
-	return nfe
+	errs := make(ds.Error, len(keys))
+	for i, err := range sparseErrs {
+		errs[i] = err
+	}
+
+	return errs
 }
 
-func (ds *ds) get(key datastore.Key, entity interface{}) (bool, error) {
+func (mds *memDs) get(key ds.Key, entity interface{}) (bool, error) {
 
 	val, err := extractStruct(entity)
 	if err != nil {
 		return false, err
 	}
 
-	ke := ds.findKeyEntity(key)
+	ke := mds.findKeyEntity(key)
 	if ke == nil {
 		return false, nil
 	}
@@ -110,8 +122,8 @@ func (ds *ds) get(key datastore.Key, entity interface{}) (bool, error) {
 	return true, nil
 }
 
-func (ds *ds) findKeyEntity(key datastore.Key) *keyEntity {
-	for _, ke := range ds.keyEntities {
+func (mds *memDs) findKeyEntity(key ds.Key) *keyEntity {
+	for _, ke := range mds.keyEntities {
 		if ke.key.Equal(key) {
 			return &ke
 		}
@@ -119,7 +131,7 @@ func (ds *ds) findKeyEntity(key datastore.Key) *keyEntity {
 	return nil
 }
 
-func verifyKeysValues(keys []datastore.Key, values reflect.Value) error {
+func verifyKeysValues(keys []ds.Key, values reflect.Value) error {
 	if values.Kind() != reflect.Slice {
 		return errors.New("entities not a slice")
 	}
@@ -157,18 +169,18 @@ func verifyKeysValues(keys []datastore.Key, values reflect.Value) error {
 	return errors.New("entities not structs or pointers")
 }
 
-func (ds *ds) Put(keys []datastore.Key, entities interface{}) (
-	[]datastore.Key, error) {
+func (mds *memDs) Put(ctx context.Context,
+	keys []ds.Key, entities interface{}) ([]ds.Key, error) {
 	values := reflect.ValueOf(entities)
 
 	if err := verifyKeysValues(keys, values); err != nil {
 		return nil, err
 	}
 
-	completeKeys := make([]datastore.Key, len(keys))
+	completeKeys := make([]ds.Key, len(keys))
 	for i, key := range keys {
 		val := values.Index(i)
-		completeKey, err := ds.put(key, val.Interface())
+		completeKey, err := mds.put(key, val.Interface())
 		if err != nil {
 			return nil, err
 		}
@@ -178,20 +190,12 @@ func (ds *ds) Put(keys []datastore.Key, entities interface{}) (
 	return completeKeys, nil
 }
 
-func (ds *ds) put(key datastore.Key, entity interface{}) (
-	datastore.Key, error) {
+func (mds *memDs) put(key ds.Key, entity interface{}) (ds.Key, error) {
 
 	// If key is incomplete then complete it.
-	if key.Incomplete() {
-		namespace := key.Namespace()
-		kind := key.Kind()
-
-		parent := key.Parent()
-		if parent == nil {
-			key = datastore.NewKey(namespace).IntID(kind, ds.nextIntID())
-		} else {
-			key = parent.IntID(kind, ds.nextIntID())
-		}
+	keyIsIncomplete := key.Path[len(key.Path)-1].ID == nil
+	if keyIsIncomplete {
+		key.Path[len(key.Path)-1].ID = mds.nextIntID()
 	}
 
 	val := reflect.ValueOf(entity)
@@ -199,12 +203,14 @@ func (ds *ds) put(key datastore.Key, entity interface{}) (
 	case reflect.Ptr:
 		val = val.Elem()
 		if val.Kind() != reflect.Struct {
-			return nil, errors.New("memds: entity not struct or struct pointer")
+			return ds.Key{},
+				errors.New("memds: entity not struct or struct pointer")
 		}
 	case reflect.Struct:
 		// Allowed entity kind.
 	default:
-		return nil, errors.New("memds: entity not struct or struct pointer")
+		return ds.Key{},
+			errors.New("memds: entity not struct or struct pointer")
 	}
 
 	// Ensure all fields are zeroed if asked to do so by the struct tags.
@@ -212,15 +218,15 @@ func (ds *ds) put(key datastore.Key, entity interface{}) (
 		fieldVal := reflect.Indirect(val.Field(i))
 
 		fieldStruct := val.Type().Field(i)
-		if ids.PropertyName(fieldStruct) == "" {
+		if propertyName(fieldStruct) == "" {
 			fieldVal.Set(reflect.Zero(fieldVal.Type()))
 		}
 	}
 
 	// Check if we already have an entity for this key.
-	if ke := ds.findKeyEntity(key); ke == nil {
+	if ke := mds.findKeyEntity(key); ke == nil {
 		// Key doesn't exist so add it.
-		ds.keyEntities = append(ds.keyEntities, keyEntity{
+		mds.keyEntities = append(mds.keyEntities, keyEntity{
 			key:    key,
 			entity: val.Interface(), // Make sure we capture the value not ptr.
 		})
@@ -232,24 +238,25 @@ func (ds *ds) put(key datastore.Key, entity interface{}) (
 	return key, nil
 }
 
-func (ds *ds) Delete(keys []datastore.Key) error {
+func (mds *memDs) Delete(ctx context.Context, keys []ds.Key) error {
 
 	for _, key := range keys {
-		if err := ds.del(key); err != nil {
+		if err := mds.del(key); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (ds *ds) del(key datastore.Key) error {
+func (mds *memDs) del(key ds.Key) error {
 
 	// Find the key entity and delete it from slice of key entities.
-	for i, ke := range ds.keyEntities {
+	for i, ke := range mds.keyEntities {
 		if ke.key.Equal(key) {
 			// This slice element delete will leak memory but is simple. See
 			// https://goo.gl/4Eer5r for a solution if this becomes a problem.
-			ds.keyEntities = append(ds.keyEntities[:i], ds.keyEntities[i+1:]...)
+			mds.keyEntities = append(mds.keyEntities[:i],
+				mds.keyEntities[i+1:]...)
 			break
 		}
 	}
@@ -272,7 +279,7 @@ func compareValues(left, right interface{}) int {
 		comp = -3
 	case float64:
 		comp = -2
-	case datastore.Key:
+	case ds.Key:
 		comp = -1
 	default:
 		panic("unknown property type")
@@ -289,7 +296,7 @@ func compareValues(left, right interface{}) int {
 		comp = comp + 3
 	case float64:
 		comp = comp + 2
-	case datastore.Key:
+	case ds.Key:
 		comp = comp + 1
 	default:
 		panic("unknown property type")
@@ -330,8 +337,8 @@ func compareValues(left, right interface{}) int {
 			return 1
 		}
 		return 0
-	case datastore.Key:
-		return compareKeys(left.(datastore.Key), right.(datastore.Key))
+	case ds.Key:
+		return compareKeys(left.(ds.Key), right.(ds.Key))
 	case time.Time:
 		l, r := left.(time.Time), right.(time.Time)
 		if l.Before(r) {
@@ -345,18 +352,11 @@ func compareValues(left, right interface{}) int {
 	}
 }
 
-func compareKeys(left, right datastore.Key) int {
+func compareKeys(left, right ds.Key) int {
 
 	// Keys with more parents come before those with less.
-	leftParentCount := 0
-	for parent := left.Parent(); parent != nil; parent = parent.Parent() {
-		leftParentCount++
-	}
-
-	rightParentCount := 0
-	for parent := right.Parent(); parent != nil; parent = parent.Parent() {
-		rightParentCount++
-	}
+	leftParentCount := len(left.Path) - 1
+	rightParentCount := len(right.Path) - 1
 
 	if leftParentCount > rightParentCount {
 		return -1
@@ -367,8 +367,8 @@ func compareKeys(left, right datastore.Key) int {
 	// From now on we know both keys have the same number of parents.
 
 	// Order by IDs.
-	leftID := left.ID()
-	rightID := right.ID()
+	leftID := left.Path[len(left.Path)-1].ID
+	rightID := right.Path[len(right.Path)-1].ID
 
 	comp := 0
 
@@ -408,8 +408,14 @@ func compareKeys(left, right datastore.Key) int {
 		}
 
 		// If IDs are identical then lets try comparing parent IDs.
-		if left.Parent() != nil {
-			return compareKeys(left.Parent(), right.Parent())
+		if len(left.Path) > 1 {
+			leftParent := left
+			leftParent.Path = left.Path[:len(left.Path)-1]
+
+			rightParent := right
+			rightParent.Path = right.Path[:len(right.Path)-1]
+
+			return compareKeys(leftParent, rightParent)
 		}
 		return 0
 	case string:
@@ -419,9 +425,16 @@ func compareKeys(left, right datastore.Key) int {
 		}
 
 		// If IDs are identical then lets try comparing parent IDs.
-		if left.Parent() != nil {
-			return compareKeys(left.Parent(), right.Parent())
+		if len(left.Path) > 1 {
+			leftParent := left
+			leftParent.Path = left.Path[:len(left.Path)-1]
+
+			rightParent := right
+			rightParent.Path = right.Path[:len(right.Path)-1]
+
+			return compareKeys(leftParent, rightParent)
 		}
+
 		return 0
 	default:
 		panic("unknown ID type")
@@ -430,7 +443,7 @@ func compareKeys(left, right datastore.Key) int {
 
 type keyEntitySorter struct {
 	keyEntities []keyEntity
-	orders      []datastore.Order
+	orders      []ds.Order
 }
 
 func (s *keyEntitySorter) Len() int {
@@ -451,12 +464,13 @@ func (s *keyEntitySorter) Less(l, r int) bool {
 	for _, o := range s.orders {
 
 		// Compare entity keys.
-		if o.Name == datastore.KeyName {
+		// TODO: Remove hard coding here.
+		if o.Name == "__key__" {
 			comp := compareKeys(lke.key, rke.key)
 			if comp < 0 {
-				return o.Dir == datastore.AscDir
+				return o.Dir == ds.AscDir
 			} else if comp > 0 {
-				return o.Dir == datastore.DescDir
+				return o.Dir == ds.DescDir
 			}
 			continue
 		}
@@ -490,9 +504,9 @@ func (s *keyEntitySorter) Less(l, r int) bool {
 		default:
 			comp := compareValues(leftVal, rightVal)
 			if comp < 0 {
-				return o.Dir == datastore.AscDir
+				return o.Dir == ds.AscDir
 			} else if comp > 0 {
-				return o.Dir == datastore.DescDir
+				return o.Dir == ds.DescDir
 			}
 			// Loop around to the next sort order if possible as properties are
 			// equal at this point.
@@ -503,15 +517,14 @@ func (s *keyEntitySorter) Less(l, r int) bool {
 	return false
 }
 
-func (ds *ds) AllocateKeys(key datastore.Key, n int) ([]datastore.Key, error) {
-	baseKey := key.Parent()
-	if baseKey == nil {
-		baseKey = datastore.NewKey(key.Namespace())
-	}
+func (mds *memDs) AllocateKeys(ctx context.Context, parent ds.Key, n int) (
+	[]ds.Key, error) {
 
-	keys := make([]datastore.Key, n)
+	lastPathElement := len(parent.Path) - 1
+	keys := make([]ds.Key, n)
 	for i := range keys {
-		keys[i] = baseKey.IntID(key.Kind(), ds.nextIntID())
+		keys[i] = parent
+		keys[i].Path[lastPathElement].ID = mds.nextIntID()
 	}
 	return keys, nil
 }
@@ -526,7 +539,7 @@ func findFieldName(entity interface{}, fieldOrTagName string) string {
 	// Field name doesn't exist so see if it maps to a user defined tag name.
 	for i := 0; i < ty.NumField(); i++ {
 		field := ty.Field(i)
-		propName := ids.PropertyName(field)
+		propName := propertyName(field)
 		if propName == fieldOrTagName {
 			return field.Name
 		}
@@ -536,52 +549,35 @@ func findFieldName(entity interface{}, fieldOrTagName string) string {
 	return ""
 }
 
-func isAncestor(ancestor, key datastore.Key) bool {
-	// Get the ancestor path.
-	ancestorPath := []datastore.Key{ancestor}
-	for parent := ancestor.Parent(); parent != nil; parent = parent.Parent() {
-		// Insert the parent to the beginning of the slice.
-		ancestorPath = append([]datastore.Key{parent}, ancestorPath...)
-	}
+func isAncestor(parent, child ds.Key) bool {
 
-	// Get the path of our key.
-	keyPath := []datastore.Key{key}
-	for parent := key.Parent(); parent != nil; parent = parent.Parent() {
-		// Insert the parent to the beginning of the slice.
-		keyPath = append([]datastore.Key{parent}, keyPath...)
-	}
-
-	if len(ancestorPath) > len(keyPath) {
-		// Ancestor's path is longer than the keyPath we are checking so it
-		// definitely cannot be an ancestor, only a possible child.
+	// It's not possible for a parent path to be longer than a child's.
+	if len(parent.Path) > len(child.Path) {
 		return false
 	}
 
-	// Now compare each path element to see they are the same until ancestor
-	// runs out of elements.
-	for i := 0; i < len(ancestorPath); i++ {
-		if !ancestorPath[i].Equal(keyPath[i]) {
-			return false
-		}
-	}
-	return true
+	// Chop the extra parts of the child.
+	child.Path = child.Path[:len(parent.Path)]
+	child.Path[len(child.Path)-1].ID = nil
+
+	return parent.Equal(child)
 }
 
 func isComparisonTrue(left interface{},
-	op datastore.FilterOp, right interface{}) bool {
+	op ds.FilterOp, right interface{}) bool {
 
 	comp := compareValues(left, right)
 
 	switch op {
-	case datastore.LessThanOp:
+	case ds.LessThanOp:
 		return comp < 0
-	case datastore.LessThanEqualOp:
+	case ds.LessThanEqualOp:
 		return comp <= 0
-	case datastore.EqualOp:
+	case ds.EqualOp:
 		return comp == 0
-	case datastore.GreaterThanEqualOp:
+	case ds.GreaterThanEqualOp:
 		return comp >= 0
-	case datastore.GreaterThanOp:
+	case ds.GreaterThanOp:
 		return comp > 0
 	default:
 		panic("unknown filter op")
@@ -598,28 +594,28 @@ func isIndexableSlice(propValue interface{}) bool {
 	return ty.Elem().Kind() != reflect.Uint8
 }
 
-func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
+func (mds *memDs) Run(ctx context.Context, q ds.Query) (ds.Iterator, error) {
 
 	indexesToRemove := map[int]struct{}{}
 
 	// Find entites to remove from our final iteration result.
-	for i, ke := range ds.keyEntities {
-		if q.Namespace != ke.key.Namespace() {
+	for i, ke := range mds.keyEntities {
+		if q.Root.Namespace != ke.key.Namespace {
 			indexesToRemove[i] = struct{}{}
 		}
 
-		if q.Kind == "" {
+		rootKind := q.Root.Path[len(q.Root.Path)-1].Kind
+		keyKind := ke.key.Path[len(ke.key.Path)-1].Kind
+		if rootKind == "" {
 			// Don't filter on kind if it is empty.
 			continue
-		} else if ke.key.Kind() != q.Kind {
+		} else if keyKind != rootKind {
 			indexesToRemove[i] = struct{}{}
 		}
 
 		// Remove non-ancestors.
-		if q.Ancestor != nil {
-			if !isAncestor(q.Ancestor, ke.key) {
-				indexesToRemove[i] = struct{}{}
-			}
+		if !isAncestor(q.Root, ke.key) {
+			indexesToRemove[i] = struct{}{}
 		}
 
 		for _, f := range q.Filters {
@@ -630,7 +626,8 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 			var propValue interface{}
 
-			if f.Name == datastore.KeyName {
+			// TOTO: Hard code this.
+			if f.Name == "__key__" {
 				// Filter by entity key.
 				propValue = ke.key
 			} else if fieldName := findFieldName(
@@ -668,7 +665,7 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 	}
 
 	keyEntities := []keyEntity{}
-	for i, ke := range ds.keyEntities {
+	for i, ke := range mds.keyEntities {
 		if _, remove := indexesToRemove[i]; remove {
 			continue
 		}
@@ -689,7 +686,7 @@ func (ds *ds) Run(q datastore.Query) (datastore.Iterator, error) {
 
 func validateFilterValue(value interface{}) error {
 	switch value.(type) {
-	case int64, float64, datastore.Key, string:
+	case int, int64, float64, string:
 		return nil
 	default:
 		return fmt.Errorf("unsupported filter value type %T", value)
@@ -703,22 +700,22 @@ type iterator struct {
 	index int
 }
 
-func (it *iterator) Next(entity interface{}) (datastore.Key, error) {
+func (it *iterator) Next(entity interface{}) (ds.Key, error) {
 
 	// Check to see if there are on more entities to return.
 	if it.index >= len(it.keyEntities) {
 		if entity == nil {
-			return nil, nil
+			return ds.Key{}, nil
 		}
 
 		// Zero the entity if there is nothing left like App Engine does.
 		val, err := extractStruct(entity)
 		if err != nil {
-			return nil, err
+			return ds.Key{}, err
 		}
 		val.Set(reflect.Zero(val.Type()))
 
-		return nil, nil
+		return ds.Key{}, nil
 	}
 
 	keyEntity := it.keyEntities[it.index]
@@ -730,21 +727,24 @@ func (it *iterator) Next(entity interface{}) (datastore.Key, error) {
 
 	val, err := extractStruct(entity)
 	if err != nil {
-		return nil, err
+		return ds.Key{}, err
 	}
 	val.Set(reflect.ValueOf(keyEntity.entity))
 	return keyEntity.key, nil
 }
 
-func (ds *ds) RunInTransaction(f func(datastore.Datastore) error) error {
+func (mds *memDs) RunInTransaction(ctx context.Context,
+	f func(context.Context) error) error {
 	txDs := &txDs{
-		ds: ds,
+		ds: mds,
 	}
-	if err := f(txDs); err != nil {
+
+	tctx := ds.NewContext(ctx, txDs)
+	if err := f(tctx); err != nil {
 		return err
 	}
 	for _, m := range txDs.mutators {
-		if err := m(ds); err != nil {
+		if err := m(ctx, mds); err != nil {
 			return err
 		}
 	}
@@ -752,50 +752,78 @@ func (ds *ds) RunInTransaction(f func(datastore.Datastore) error) error {
 }
 
 type txDs struct {
-	ds       *ds
-	mutators []func(ds datastore.Datastore) error
+	ds       *memDs
+	mutators []func(context.Context, ds.Ds) error
 }
 
-func (ds *txDs) Get(keys []datastore.Key, entities interface{}) error {
-	return ds.ds.Get(keys, entities)
+func (tds *txDs) RunInTransaction(ctx context.Context,
+	f func(context.Context) error) error {
+	return errors.New("already in transaction")
 }
 
-func (ds *txDs) Put(keys []datastore.Key, entities interface{}) ([]datastore.Key, error) {
+func (tds *txDs) Get(ctx context.Context,
+	keys []ds.Key, entities interface{}) error {
+	return tds.ds.Get(ctx, keys, entities)
+}
+
+func (tds *txDs) Put(ctx context.Context, keys []ds.Key, entities interface{}) (
+	[]ds.Key, error) {
 
 	// Return complete keys witin the transaction by automatically completing
 	// them even though ds.Put isn't actually called yet.
-	completeKeys := make([]datastore.Key, len(keys))
-	for i, k := range keys {
-		completeKey := k
-		if k.Incomplete() {
-			baseKey := k.Parent()
-			if baseKey == nil {
-				baseKey = datastore.NewKey(k.Namespace())
-			}
-			completeKey = baseKey.IntID(k.Kind(), ds.ds.nextIntID())
-
+	completeKeys := make([]ds.Key, len(keys))
+	for i, key := range keys {
+		keyIsIncomplete := key.Path[len(key.Path)-1].ID == nil
+		if keyIsIncomplete {
+			key.Path[len(key.Path)-1].ID = tds.ds.nextIntID()
 		}
-		completeKeys[i] = completeKey
+		completeKeys[i] = key
 	}
 
-	ds.mutators = append(ds.mutators, func(ds datastore.Datastore) error {
-		_, err := ds.Put(completeKeys, entities)
-		return err
-	})
+	tds.mutators = append(tds.mutators,
+		func(ctx context.Context, ds ds.Ds) error {
+			_, err := ds.Put(ctx, completeKeys, entities)
+			return err
+		})
 	return completeKeys, nil
 }
 
-func (ds *txDs) Delete(keys []datastore.Key) error {
-	ds.mutators = append(ds.mutators, func(ds datastore.Datastore) error {
-		return ds.Delete(keys)
-	})
+func (tds *txDs) Delete(ctx context.Context, keys []ds.Key) error {
+	tds.mutators = append(tds.mutators,
+		func(ctx context.Context, ds ds.Ds) error {
+			return ds.Delete(ctx, keys)
+		})
 	return nil
 }
 
-func (ds *txDs) AllocateKeys(key datastore.Key, n int) ([]datastore.Key, error) {
-	return ds.ds.AllocateKeys(key, n)
+func (tds *txDs) AllocateKeys(ctx context.Context, parent ds.Key, n int) (
+	[]ds.Key, error) {
+	return tds.ds.AllocateKeys(ctx, parent, n)
 }
 
-func (ds *txDs) Run(q datastore.Query) (datastore.Iterator, error) {
+func (tds *txDs) Run(ctx context.Context, q ds.Query) (ds.Iterator, error) {
 	return nil, errors.New("not implemented")
+}
+
+func propertyName(field reflect.StructField) string {
+
+	// Don't include unexported fields.
+	if field.PkgPath != "" {
+		return ""
+	}
+
+	// See if the user has a specific name they would like to use for the field.
+	tagValues := strings.Split(field.Tag.Get("datastore"), ",")
+	if len(tagValues) > 0 {
+		switch tagValues[0] {
+		case "-":
+			// This field isn't needed.
+			return ""
+		case "":
+			return field.Name
+		default:
+			return tagValues[0]
+		}
+	}
+	return field.Name
 }

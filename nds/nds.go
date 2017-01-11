@@ -1,8 +1,8 @@
 package nds
 
 import (
-	"github.com/qedus/appengine/ds"
-	"github.com/qedus/appengine/ds/datastore"
+	"github.com/qedus/appengine/datastore"
+	"github.com/qedus/ds"
 	"github.com/qedus/nds"
 )
 

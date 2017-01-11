@@ -3,7 +3,7 @@ package datastore
 import (
 	"fmt"
 
-	"github.com/qedus/appengine/ds"
+	"github.com/qedus/ds"
 
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"

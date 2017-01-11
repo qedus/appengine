@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/qedus/appengine/ds"
-	"github.com/qedus/appengine/ds/nds"
+	"github.com/qedus/appengine/nds"
+	"github.com/qedus/ds"
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/aetest"
